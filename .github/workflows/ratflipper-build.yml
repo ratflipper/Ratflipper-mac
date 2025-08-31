@@ -1,32 +1,44 @@
-build-macos:
-  runs-on: macos-latest
-  steps:
-  - name: Checkout code
-    uses: actions/checkout@v3
+name: Build Ratflipper for macOS
 
-  - name: Setup Python
-    uses: actions/setup-python@v4
-    with:
-      python-version: '3.10'
+on:
+  push:
+    branches:
+      - main   # runs on every push to main
+  # OR if you prefer only on version tags, use this instead:
+  # push:
+  #   tags:
+  #     - 'v*'
 
-  - name: Install dependencies
-    run: |
-      python -m pip install --upgrade pip
-      pip install pyinstaller
-      pip install -r requirements.txt
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-  - name: Build .app with PyInstaller
-    run: |
-      pyinstaller --windowed --onefile Ratflipper.py \
-        --add-data "ratflipper.ico:." \
-        --icon=ratflipper.ico \
-        --name Ratflipper
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-  - name: Move .app
-    run: mv dist/Ratflipper.app Ratflipper.app
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
 
-  - name: Upload artifact
-    uses: actions/upload-artifact@v3
-    with:
-      name: Ratflipper-macOS
-      path: Ratflipper.app
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller --windowed --onefile Ratflipper.py \
+            --add-data "ratflipper.ico:." \
+            --icon=ratflipper.ico \
+            --name Ratflipper
+
+      - name: Move .app
+        run: mv dist/Ratflipper.app Ratflipper.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Ratflipper-macOS
+          path: Ratflipper.app
