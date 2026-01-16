@@ -1,42 +1,10 @@
-# Rat Flipper Pro - Requirements
-# Install with: pip install -r requirements.txt
-# 
-# This file contains all dependencies needed to run Rat Flipper Pro
-# Works on Windows, macOS, and Linux
-
-# Core GUI framework
 customtkinter>=5.2.0
-
-# Async networking and file handling
 aiofiles>=23.2.1
-aiohttp>=3.9.1
 nats-py>=2.6.0
-
-# Data processing and analysis
-pandas>=2.1.4
-numpy>=1.24.0
-
-# File system monitoring
+aiohttp>=3.9.1
 watchdog>=3.0.0
-
-# HTTP requests and web interactions
-requests>=2.31.0
-
-# Image processing (for background images)
-Pillow>=10.1.0
-
-# Optional: For analytics graphs (uncomment if you want graphs back)
-# matplotlib>=3.8.0
-
-# Optional: For Mac-specific optimizations (uncomment on macOS)
-# pyobjc-framework-Cocoa>=10.0
-# pyobjc-framework-Quartz>=10.0
-
-# Optional: For creating standalone executables
-# pyinstaller>=6.0.0
-
-# Optional: For creating Mac app bundles
-# py2app>=0.28.0
-
-# Optional: For creating Windows installers
-# cx_Freeze>=6.15.0
+pandas>=2.1.4
+pillow>=10.1.0
+matplotlib>=3.8.2
+requests>=2.32.0,<3.0
+pyinstaller>=6.2.0
