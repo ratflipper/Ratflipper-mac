@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Rat Flipper GUI
@@ -226,7 +227,7 @@ class AutoUpdater:
         # App icon and title
         icon_label = ctk.CTkLabel(
             header_frame,
-            text="🦁",
+            text="🐀",
             font=("Segoe UI Emoji", 32),
             text_color="#00d4ff"
         )
@@ -564,7 +565,7 @@ class LoadingAnimation:
         # App icon with glow effect
         self.icon_label = ctk.CTkLabel(
             content_frame, 
-            text="🦁", 
+            text="🐀", 
             font=("Segoe UI Emoji", 72),
             text_color="#00d4ff"
         )
@@ -1263,8 +1264,27 @@ class NATSClient:
             callback(True, "Reconnected to NATS")
 
     async def _on_error(self, e):
-        """Handle NATS errors"""
-        logger.error(f"NATS error: {e}")
+        """Handle NATS errors with better reconnection logic"""
+        error_msg = str(e)
+        logger.error(f"NATS error: {error_msg}")
+        
+        # Handle specific error types
+        if "unexpected eof" in error_msg.lower() or "connection lost" in error_msg.lower():
+            logger.info("Connection lost, attempting to reconnect...")
+            # Don't spam reconnection attempts
+            if not hasattr(self, '_reconnecting'):
+                self._reconnecting = True
+                try:
+                    await asyncio.sleep(2)  # Wait before reconnecting
+                    await self.connect()
+                except Exception as reconnect_error:
+                    logger.error(f"Reconnection failed: {reconnect_error}")
+                finally:
+                    self._reconnecting = False
+        elif "timeout" in error_msg.lower():
+            logger.info("NATS timeout, will retry connection...")
+        else:
+            logger.info(f"Unknown NATS error: {error_msg}")
 
     async def _on_closed(self):
         """Handle NATS connection closure"""
@@ -1560,42 +1580,147 @@ class RealTimeFlipDetector:
 # --- Animated Button and Main GUI Skeleton ---
 
 class AnimatedButton(ctk.CTkButton):
-    """Custom button with click and hover animation (color, scale, and ripple)"""
+    """Enhanced button with microinteractions, loading states, and better UX"""
     def __init__(self, *args, **kwargs):
-        # Ensure fg_color and text_color are always set and high-contrast
+        # Enhanced font settings for better readability
+        self.button_font = kwargs.pop('font', ("Segoe UI", 11, "bold"))
+        kwargs.setdefault('font', self.button_font)
+        
+        # Ensure high contrast colors
         kwargs.setdefault('fg_color', ACCENT_COLOR)
-        kwargs.setdefault('text_color', '#f8f8f2')
+        kwargs.setdefault('text_color', '#ffffff')  # Pure white for better contrast
+        kwargs.setdefault('hover_color', '#00b0cc')  # Slightly darker accent
+        kwargs.setdefault('border_width', 0)
+        kwargs.setdefault('corner_radius', 8)
+        
         super().__init__(*args, **kwargs)
+        
+        # Animation properties
         self.original_width = kwargs.get('width', 140)
-        self.original_height = kwargs.get('height', 28)
+        self.original_height = kwargs.get('height', 32)
         self._hovered = False
         self._animating = False
         self._scale = 1.0
         self._fg_normal = kwargs['fg_color']
-        self._fg_hover = self._darker(self._fg_normal, 0.85)
+        self._fg_hover = kwargs.get('hover_color', '#00b0cc')
         self._fg_press = self._darker(self._fg_normal, 0.7)
-        self._pressed = False  # Ensure _pressed is always defined
+        self._pressed = False
+        
+        # Loading state
+        self._loading = False
+        self._loading_text = "Loading..."
+        self._original_text = self.cget('text')
+        
+        # Success/error states
+        self._success_state = False
+        self._error_state = False
+        
+        # Enhanced interactions
         self.bind("<Button-1>", self._on_click)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        
         # Ripple effect canvas
         self._ripple_canvas = None
+        
+        # Store original colors to prevent theme changes from affecting them
+        self._original_fg_color = self.cget('fg_color')
+        self._original_text_color = self.cget('text_color')
+        self._original_hover_color = self.cget('hover_color')
     def _on_click(self, event):
+        if self._loading:
+            return  # Prevent clicks during loading
+        
         self._animate_press()
-        self._ripple(event)
-        # Play custom pop sound (cross-platform)
-        try:
-            if platform.system() == "Windows":
-                import winsound
-                winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            elif platform.system() == "Darwin":  # macOS
-                import os
-                os.system("afplay /System/Library/Sounds/Tink.aiff")
-            else:  # Linux
-                import os
-                os.system("echo -e '\a'")
-        except Exception:
-            pass
+        # Disable ripple effect for better performance
+        # self._ripple(event)
+        
+        # Play subtle click sound (Windows only)
+        if platform.system() == "Windows":
+            try:
+                winsound.Beep(800, 50)  # Short, pleasant beep
+            except Exception:
+                pass
+    
+    def _on_release(self, event):
+        """Handle button release for better feedback"""
+        if not self._loading:
+            self._animate_hover(True)  # Return to hover state
+    
+    def set_loading(self, loading=True, text="Loading..."):
+        """Set loading state with spinner animation"""
+        self._loading = loading
+        self._loading_text = text
+        
+        if loading:
+            self._original_text = self.cget('text')
+            self.configure(text=text, state='disabled')
+            self._start_loading_animation()
+        else:
+            self.configure(text=self._original_text, state='normal')
+            self._stop_loading_animation()
+    
+    def _start_loading_animation(self):
+        """Start loading spinner animation"""
+        def animate_spinner(step=0):
+            if self._loading:
+                spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+                char = spinner_chars[step % len(spinner_chars)]
+                self.configure(text=f"{char} {self._loading_text}")
+                self.after(100, lambda: animate_spinner(step + 1))
+        animate_spinner()
+    
+    def _stop_loading_animation(self):
+        """Stop loading animation"""
+        self._loading = False
+    
+    def show_success(self, message="Success!", duration=2000):
+        """Show success state with animation"""
+        self._success_state = True
+        original_text = self.cget('text')
+        original_color = self.cget('fg_color')
+        
+        # Animate to success state
+        self.configure(text=message, fg_color='#10b981', text_color='#ffffff')
+        
+        def reset_after_delay():
+            self.after(duration, lambda: self._reset_state(original_text, original_color))
+        
+        reset_after_delay()
+    
+    def show_error(self, message="Try again", duration=2000):
+        """Show error state with animation"""
+        self._error_state = True
+        original_text = self.cget('text')
+        original_color = self.cget('fg_color')
+        
+        # Animate to error state
+        self.configure(text=message, fg_color='#ef4444', text_color='#ffffff')
+        
+        def reset_after_delay():
+            self.after(duration, lambda: self._reset_state(original_text, original_color))
+        
+        reset_after_delay()
+    
+    def _reset_state(self, original_text, original_color):
+        """Reset button to original state"""
+        self._success_state = False
+        self._error_state = False
+        self.configure(text=original_text, fg_color=original_color, text_color='#ffffff')
+    
+    def preserve_colors(self):
+        """Preserve button colors from theme changes"""
+        if hasattr(self, '_original_fg_color'):
+            self.configure(
+                fg_color=self._original_fg_color,
+                text_color=self._original_text_color,
+                hover_color=self._original_hover_color
+            )
+            # Update internal color references
+            self._fg_normal = self._original_fg_color
+            self._fg_hover = self._darker(self._original_fg_color, 0.85)
+            self._fg_press = self._darker(self._original_fg_color, 0.7)
     def _on_enter(self, event=None):
         self._hovered = True
         self._animate_hover(True)
@@ -1603,44 +1728,18 @@ class AnimatedButton(ctk.CTkButton):
         self._hovered = False
         self._animate_hover(False)
     def _animate_hover(self, entering, step=0):
-        # Speed up animation.
-        steps = 6
-        delay = 10
+        """Instant hover with zero lag"""
+        # Completely instant hover - no animations
         if entering:
-            color1 = self._fg_normal
-            color2 = self._fg_hover
+            self.configure(fg_color=self._fg_hover)
         else:
-            color1 = self._fg_hover
-            color2 = self._fg_normal
-        def animate(i=0):
-            t = i / steps
-            color = self._interpolate_color(color1, color2, t)
-            self.configure(fg_color=color)
-            if i < steps:
-                self.after(delay, lambda: animate(i+1))
-        animate()
+            self.configure(fg_color=self._fg_normal)
     def _animate_press(self, step=0):
-        # Speed up press animation
-        steps = 4
-        delay = 8
-        color1 = self._fg_hover
-        color2 = self._fg_press
-        def animate_down(i=0):
-            t = i / steps
-            color = self._interpolate_color(color1, color2, t)
-            self.configure(fg_color=color)
-            if i < steps:
-                self.after(delay, lambda: animate_down(i+1))
-        def animate_up(i=0):
-            t = i / steps
-            color = self._interpolate_color(color2, color1, t)
-            self.configure(fg_color=color)
-            if i < steps:
-                self.after(delay, lambda: animate_up(i+1))
-        if self._pressed:
-            animate_down()
-        else:
-            animate_up()
+        """Instant press with zero lag"""
+        # Completely instant press - no animations
+        self.configure(fg_color=self._fg_press)
+        # Instant bounce back
+        self.after(50, lambda: self.configure(fg_color=self._fg_hover if self._hovered else self._fg_normal))
     def _darker(self, color, factor):
         # Accepts hex or tuple
         if isinstance(color, str) and color.startswith('#'):
@@ -1693,6 +1792,149 @@ class AnimatedButton(ctk.CTkButton):
                         self._ripple_canvas.destroy()
                         self._ripple_canvas = None
         animate_ripple()
+
+class LoadingSpinner(ctk.CTkFrame):
+    """Animated loading spinner component"""
+    def __init__(self, parent, text="Loading...", size=20):
+        super().__init__(parent, fg_color="transparent")
+        self.text = text
+        self.size = size
+        self.animating = False
+        
+        # Create spinner label
+        self.spinner_label = ctk.CTkLabel(
+            self, 
+            text="", 
+            font=("Segoe UI", 12),
+            text_color=ACCENT_COLOR
+        )
+        self.spinner_label.pack(pady=10)
+        
+        # Create text label
+        self.text_label = ctk.CTkLabel(
+            self,
+            text=text,
+            font=("Segoe UI", 11),
+            text_color="#f8f8f2"
+        )
+        self.text_label.pack()
+    
+    def start(self):
+        """Start the spinner animation"""
+        self.animating = True
+        self._animate()
+    
+    def stop(self):
+        """Stop the spinner animation"""
+        self.animating = False
+    
+    def _animate(self):
+        """Animate the spinner"""
+        if not self.animating:
+            return
+            
+        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        char = spinner_chars[int(time.time() * 10) % len(spinner_chars)]
+        self.spinner_label.configure(text=char)
+        self.after(100, self._animate)
+
+class EmptyState(ctk.CTkFrame):
+    """Empty state component with friendly messaging - preserves original colors"""
+    def __init__(self, parent, icon="🔍", title="No flips found", message="We're searching for opportunities...", action_text=None, action_callback=None):
+        # Use fixed colors that don't change with themes
+        super().__init__(parent, fg_color="#2d3748")  # Fixed dark gray background
+        
+        # Icon with fixed accent color
+        icon_label = ctk.CTkLabel(
+            self,
+            text=icon,
+            font=("Segoe UI", 48),
+            text_color="#a259ff"  # Fixed purple accent
+        )
+        icon_label.pack(pady=(20, 10))
+        
+        # Title with fixed white color
+        title_label = ctk.CTkLabel(
+            self,
+            text=title,
+            font=("Segoe UI", 18, "bold"),
+            text_color="#ffffff"  # Fixed white
+        )
+        title_label.pack(pady=(0, 8))
+        
+        # Message with fixed light color
+        message_label = ctk.CTkLabel(
+            self,
+            text=message,
+            font=("Segoe UI", 12),
+            text_color="#e0e0e0",  # Fixed light gray
+            wraplength=300
+        )
+        message_label.pack(pady=(0, 20))
+        
+        # Action button (optional) with fixed styling
+        if action_text and action_callback:
+            action_btn = AnimatedButton(
+                self,
+                text=action_text,
+                command=action_callback,
+                width=120,
+                height=32,
+                fg_color="#a259ff",  # Fixed purple
+                text_color="#ffffff",  # Fixed white
+                hover_color="#8a4fb8"  # Fixed darker purple
+            )
+            action_btn.pack()
+
+class ToastNotification(ctk.CTkFrame):
+    """Toast notification for success/error messages"""
+    def __init__(self, parent, message, notification_type="success", duration=3000):
+        super().__init__(parent, fg_color="transparent")
+        
+        # Colors based on type
+        if notification_type == "success":
+            bg_color = "#10b981"
+            icon = "✓"
+        elif notification_type == "error":
+            bg_color = "#ef4444"
+            icon = "✗"
+        else:
+            bg_color = ACCENT_COLOR
+            icon = "ℹ"
+        
+        # Create notification frame
+        self.notification_frame = ctk.CTkFrame(
+            self,
+            fg_color=bg_color,
+            corner_radius=8,
+            border_width=1,
+            border_color="#ffffff"
+        )
+        self.notification_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Content
+        content_frame = ctk.CTkFrame(self.notification_frame, fg_color="transparent")
+        content_frame.pack(fill="x", padx=15, pady=10)
+        
+        # Icon and message
+        icon_label = ctk.CTkLabel(
+            content_frame,
+            text=icon,
+            font=("Segoe UI", 16),
+            text_color="#ffffff"
+        )
+        icon_label.pack(side="left", padx=(0, 10))
+        
+        message_label = ctk.CTkLabel(
+            content_frame,
+            text=message,
+            font=("Segoe UI", 12),
+            text_color="#ffffff"
+        )
+        message_label.pack(side="left", fill="x", expand=True)
+        
+        # Auto-hide after duration
+        self.after(duration, self.destroy)
 
 def find_items_txt():
     # Search in common user directories
@@ -1785,28 +2027,26 @@ class RatFlipperGUI:
         self.completed_flips_file = "completed_flips.json"
         self.completed_flips_history = []  # List of dicts: {item, city, profit, time}
         self.load_completed_flips() # Load persistent history
+        
+        # Demands tracking
+        self.demands_file = "demands_data.json"
+        self.demands_data = {}  # Dict: {item_name: {count, total_profit, last_seen, flips_list}}
+        self.load_demands_data()
 
         import customtkinter
         print('customtkinter version:', customtkinter.__version__)
-        # Initialize customtkinter with Mac optimizations
+        # Initialize customtkinter
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
-        
-        # Mac-specific optimizations
-        if platform.system() == "Darwin":
-            # Enable Mac-specific features
-            try:
-                # Set Mac window style
-                import tkinter as tk
-                tk.Tk().withdraw()  # Hide the test window
-            except:
-                pass
         # Create main window
         print("🪟 Creating main window...")
         self.root = ctk.CTk()
         self.root.title("Rat Flipper Pro - Standalone Edition")
         self.root.geometry("1800x1000")
         self.root.minsize(1500, 800)
+        
+        # Bind resize event
+        self.root.bind('<Configure>', self.on_window_resize)
         
         # Show loading animation
         print("🎬 Starting loading animation...")
@@ -1881,12 +2121,17 @@ class RatFlipperGUI:
         self.notifications_enabled = tk.BooleanVar(value=True)
         
         # Auto-updater initialization
-        self.current_version = "1.3.0"  # Current version matching your latest GitHub release
+        self.current_version = "1.4.7"  # Current version matching your latest GitHub release
         self.auto_updater = AutoUpdater(self.current_version)
         self.notification_min_profit = tk.StringVar(value="200000")
         self.notification_cooldown_var = tk.StringVar(value="10")
         self.last_notification_time = 0  # Track last notification time
         self.active_notification = None  # Track active notification window
+        
+        # Always-on-top state
+        self.screen_on_top_var = tk.BooleanVar(value=False)
+        self.screen_on_top_button = None
+
         self.load_config()
         
         # Auto-load enchanting prices
@@ -1913,10 +2158,15 @@ class RatFlipperGUI:
         self._themed_widgets = []  # Store all panels/frames/widgets to update on theme/bg change
         self.current_font_color = "#f8f8f2"  # Default font color
         self._refreshing_ui = False  # Flag to prevent recursive calls
-        # Setup UI (to be filled in next chunks)
+        self._animation_queue = []  # Queue for synchronized animations
+        self._animation_timer = None  # Timer for animation coordination
+        self._tab_animating = False  # Flag to prevent tab animation conflicts
+        self._disable_heavy_animations = False  # Flag to disable laggy animations
         print("🎨 Creating UI...")
         self.create_ui()
         print("✅ UI created")
+        # Optimize animation timing based on system performance
+        self.optimize_animation_timing()
         # Setup file watcher and NATS client
         self.setup_file_watcher()
         self.setup_nats_client()
@@ -1927,6 +2177,7 @@ class RatFlipperGUI:
         # In __init__, bind resize event
         self.root.bind('<Configure>', self.on_resize)
         print('✅ Main window created and UI initialized')
+        
         self.schedule_auto_scan_and_refresh()
         # Start automatic enchanting scan
         self.schedule_auto_enchanting_scan()
@@ -1944,41 +2195,165 @@ class RatFlipperGUI:
         self.create_main_frame()
         self.create_status_bar()
         
+        # Initialize window size variables after UI is created
+        self.window_width_var = tk.StringVar(value="1800")
+        self.window_height_var = tk.StringVar(value="1000")
+        
         # Force layout update and ensure proper sizing
         self.root.update_idletasks()
         self.root.update()
         self.root.minsize(1200, 800)
 
+    def toggle_screen_on_top(self):
+        """Toggle the main window always-on-top behavior."""
+        is_on = not self.screen_on_top_var.get()
+        self.screen_on_top_var.set(is_on)
+        try:
+            self.root.attributes("-topmost", is_on)
+            # Ensure the window remains resizable even when always-on-top is enabled
+            self.root.resizable(True, True)
+        except Exception as e:
+            print(f"[WARN] Failed to set topmost: {e}")
+        
+        # Update button appearance if it exists
+        if self.screen_on_top_button is not None:
+            if is_on:
+                self.screen_on_top_button.configure(
+                    text="Screen on top ✓",
+                    fg_color="#00b894",
+                    text_color="#0b1020"
+                )
+            else:
+                self.screen_on_top_button.configure(
+                    text="Screen on top",
+                    fg_color="#4a5568",
+                    text_color="#f8f8f2"
+                )
+
     def create_sidebar_panel(self):
         """Create left sidebar panel with vertical navigation buttons that control the main content area"""
-        sidebar = ctk.CTkFrame(self.root, fg_color="#232946", width=90)
+        sidebar = ctk.CTkFrame(self.root, fg_color="#232946", width=140)
         sidebar.grid(row=1, column=0, sticky="nsw", padx=(10, 0), pady=5)
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
+        # Add sidebar to themed widgets
+        self._themed_widgets.append(sidebar)
+        self.sidebar = sidebar  # Store reference
         
-        # Vertical navigation buttons
-        self.flips_btn = ctk.CTkButton(sidebar, text="🦁\nFlips", command=lambda: self.select_main_tab("Flips"), height=60, width=80, anchor="center")
-        self.flips_btn.grid(row=0, column=0, padx=4, pady=(15, 8), sticky="ew")
-        self.analytics_btn = ctk.CTkButton(sidebar, text="📈\nAnalytics", command=lambda: self.select_main_tab("Analytics"), height=60, width=80, anchor="center")
-        self.analytics_btn.grid(row=1, column=0, padx=4, pady=8, sticky="ew")
-        self.enchanting_btn = ctk.CTkButton(sidebar, text="✨\nEnchant", command=lambda: self.select_main_tab("Enchanting"), height=60, width=80, anchor="center")
-        self.enchanting_btn.grid(row=2, column=0, padx=4, pady=8, sticky="ew")
-        self.settings_btn = ctk.CTkButton(sidebar, text="⚙️\nSettings", command=lambda: self.select_main_tab("Settings"), height=60, width=80, anchor="center")
-        self.settings_btn.grid(row=3, column=0, padx=4, pady=(8, 15), sticky="ew")
+        # Vertical navigation buttons - bigger with distinct background
+        self.flips_btn = AnimatedButton(
+            sidebar, 
+            text="🐀\nFlips", 
+            command=lambda: self.select_main_tab("Flips"), 
+            height=70, 
+            width=120, 
+            anchor="center", 
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#1a1d2e",  # Distinct dark background
+            text_color="#ffffff",
+            hover_color="#232946",
+            corner_radius=15,
+            border_width=2,
+            border_color="#00d4ff"
+        )
+        self.flips_btn.grid(row=0, column=0, padx=8, pady=(15, 10), sticky="ew")
+        self.create_tooltip(self.flips_btn, "View flip opportunities and manage your flips")
+        
+        self.analytics_btn = AnimatedButton(
+            sidebar, 
+            text="📈\nAnalytics", 
+            command=lambda: self.select_main_tab("Analytics"), 
+            height=70, 
+            width=120, 
+            anchor="center", 
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#1a1d2e",
+            text_color="#ffffff",
+            hover_color="#232946",
+            corner_radius=15,
+            border_width=2,
+            border_color="#00d4ff"
+        )
+        self.analytics_btn.grid(row=1, column=0, padx=8, pady=10, sticky="ew")
+        self.create_tooltip(self.analytics_btn, "View detailed analytics and profit statistics")
+        
+        self.demands_btn = AnimatedButton(
+            sidebar, 
+            text="📊\nDemands", 
+            command=lambda: self.select_main_tab("Demands"), 
+            height=70, 
+            width=120, 
+            anchor="center", 
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#1a1d2e",
+            text_color="#ffffff",
+            hover_color="#232946",
+            corner_radius=15,
+            border_width=2,
+            border_color="#00d4ff"
+        )
+        self.demands_btn.grid(row=2, column=0, padx=8, pady=10, sticky="ew")
+        self.create_tooltip(self.demands_btn, "Track item demand and market trends")
+        
+        self.enchanting_btn = AnimatedButton(
+            sidebar, 
+            text="✨\nEnchant", 
+            command=lambda: self.select_main_tab("Enchanting"), 
+            height=70, 
+            width=120, 
+            anchor="center", 
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#1a1d2e",
+            text_color="#ffffff",
+            hover_color="#232946",
+            corner_radius=15,
+            border_width=2,
+            border_color="#00d4ff"
+        )
+        self.enchanting_btn.grid(row=3, column=0, padx=8, pady=10, sticky="ew")
+        self.create_tooltip(self.enchanting_btn, "Enchant items and calculate enchantment profits")
+        
+        self.settings_btn = AnimatedButton(
+            sidebar, 
+            text="⚙️\nSettings", 
+            command=lambda: self.select_main_tab("Settings"), 
+            height=70, 
+            width=120, 
+            anchor="center", 
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#1a1d2e",
+            text_color="#ffffff",
+            hover_color="#232946",
+            corner_radius=15,
+            border_width=2,
+            border_color="#00d4ff"
+        )
+        self.settings_btn.grid(row=4, column=0, padx=8, pady=(10, 15), sticky="ew")
+        self.create_tooltip(self.settings_btn, "Configure application settings and preferences")
 
     def create_main_frame(self):
         """Create main content area with all tabs: Flips, Analytics, Stats, Settings"""
-        main_frame = ctk.CTkFrame(self.root, fg_color="#232946")
+        # Use theme colors for main frame
+        palette = self.get_palette()
+        main_frame = ctk.CTkFrame(self.root, fg_color=palette['panel'])
         main_frame.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
         main_frame.grid_columnconfigure(0, weight=1)
         main_frame.grid_rowconfigure(0, weight=1)
-        # Add CTkTabview for main content
-        self.tabview = CTkTabview(main_frame, fg_color="#232946", segmented_button_fg_color="#232946", segmented_button_selected_color=ACCENT_COLOR, segmented_button_unselected_color="#232946", segmented_button_selected_hover_color="#00b0cc", width=900)
+        # Add main frame to themed widgets
+        self._themed_widgets.append(main_frame)
+        self.main_frame = main_frame  # Store reference
+        
+        # Add CTkTabview for main content with theme colors
+        self.tabview = CTkTabview(main_frame, fg_color=palette['panel'], segmented_button_fg_color=palette['panel'], segmented_button_selected_color=ACCENT_COLOR, segmented_button_unselected_color=palette['panel'], segmented_button_selected_hover_color="#00b0cc", width=900)
+        # Add tabview to themed widgets
+        self._themed_widgets.append(self.tabview)
         self.tabview.grid(row=0, column=0, sticky="nsew")
         self.tabview.add("Flips")
         self.create_results_panel(self.tabview.tab("Flips"))
         self.tabview.add("Analytics")
         self.create_analytics_section(self.tabview.tab("Analytics"))
+        self.tabview.add("Demands")
+        self.create_demands_panel(self.tabview.tab("Demands"))
         self.tabview.add("Enchanting")
         self.create_enchanting_panel(self.tabview.tab("Enchanting"))
         self.tabview.add("Settings")
@@ -1993,8 +2368,66 @@ class RatFlipperGUI:
     def select_main_tab(self, tab_name):
         """Select the given tab in the main content area and update header if needed"""
         self.tabview.set(tab_name)
-        # Optionally update header here if you want to reflect the selected tab
-        # Example: self.header_label.configure(text=tab_name)
+        
+        # Update button colors to show selected state
+        self._update_tab_button_colors(tab_name)
+        
+        # Update status bar based on current tab
+        if tab_name == "Flips":
+            if hasattr(self, 'flip_opportunities'):
+                self.status_var.set(f"Ready - {len(self.flip_opportunities)} flip opportunities available")
+            else:
+                self.status_var.set("Ready - No flip opportunities yet")
+        elif tab_name == "Enchanting":
+            if hasattr(self, 'enchanting_opportunities'):
+                self.status_var.set(f"Ready - {len(self.enchanting_opportunities)} enchanting opportunities available")
+            else:
+                self.status_var.set("Ready - No enchanting opportunities yet")
+        elif tab_name == "Analytics":
+            if hasattr(self, 'completed_flips_history'):
+                self.status_var.set(f"Analytics - {len(self.completed_flips_history)} completed flips tracked")
+            else:
+                self.status_var.set("Analytics - No completed flips yet")
+        elif tab_name == "Demands":
+            if hasattr(self, 'demands_data'):
+                self.status_var.set(f"Demands - {len(self.demands_data)} profitable items tracked")
+            else:
+                self.status_var.set("Demands - No demand data yet")
+        elif tab_name == "Settings":
+            self.status_var.set("Settings - Configure your preferences")
+        else:
+            self.status_var.set(f"Ready - {tab_name} tab selected")
+    
+    def _update_tab_button_colors(self, selected_tab):
+        """Update tab button colors to show selected state"""
+        # Get current theme colors
+        palette = self.get_palette()
+        content_color = palette['panel']  # Same as content area
+        
+        # Reset all buttons to default
+        buttons = {
+            'Flips': self.flips_btn,
+            'Analytics': self.analytics_btn,
+            'Demands': self.demands_btn,
+            'Enchanting': self.enchanting_btn,
+            'Settings': self.settings_btn
+        }
+        
+        for tab_name, button in buttons.items():
+            if tab_name == selected_tab:
+                # Selected button - same color as content area
+                button.configure(
+                    fg_color=content_color,
+                    border_color=ACCENT_COLOR,
+                    border_width=3
+                )
+            else:
+                # Unselected button - default styling
+                button.configure(
+                    fg_color="#1a1d2e",
+                    border_color=ACCENT_COLOR,
+                    border_width=2
+                )
 
     def create_status_bar(self):
         status_bar = ctk.CTkFrame(self.root, fg_color="#181c24", height=36, corner_radius=0, border_width=0)
@@ -2010,9 +2443,10 @@ class RatFlipperGUI:
         header_frame = ctk.CTkFrame(self.root, fg_color="#232946", corner_radius=24, border_width=0)
         self._themed_widgets.append(header_frame)
         header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(18, 8))
-        header_frame.grid_columnconfigure(13, weight=1)
+        # Configure grid to keep buttons in fixed positions
+        header_frame.grid_columnconfigure(14, weight=1)  # Move weight to column 14 (after management button)
         # App icon and title
-        icon_label = ctk.CTkLabel(header_frame, text="🦁", font=("Segoe UI Emoji", 36))
+        icon_label = ctk.CTkLabel(header_frame, text="🐀", font=("Segoe UI Emoji", 36))
         self._themed_widgets.append(icon_label)
         icon_label.grid(row=0, column=0, padx=(20, 10), pady=10)
         title_label = ctk.CTkLabel(header_frame, text="Rat Flipper Pro", font=HEADER_FONT, text_color=ACCENT_COLOR)
@@ -2088,36 +2522,20 @@ class RatFlipperGUI:
         self.connection_label.grid(row=0, column=9, padx=10, pady=10)
         refresh_button = AnimatedButton(
             header_frame,
-            text="🔄  Refresh",
+            text="🔄  Reconnect",
             command=self.refresh_nats_server,
             width=120,
             height=40,
-            fg_color=ACCENT_COLOR,
+            fg_color="#4a5568",
             text_color="#f8f8f2",
             corner_radius=20
         )
         self._themed_widgets.append(refresh_button)
         refresh_button.grid(row=0, column=10, padx=10, pady=10)
         refresh_button.bind("<Enter>", lambda e: refresh_button.configure(fg_color="#00b0cc"))
-        refresh_button.bind("<Leave>", lambda e: refresh_button.configure(fg_color=ACCENT_COLOR))
+        refresh_button.bind("<Leave>", lambda e: refresh_button.configure(fg_color="#4a5568"))
         self.create_tooltip(refresh_button, "Reconnect to the selected NATS server")
         
-        # Manual Scan button
-        manual_scan_button = AnimatedButton(
-            header_frame,
-            text="🔍 Scan & Refresh",
-            command=self.run_full_scan,
-            width=160,
-            height=40,
-            fg_color=ACCENT_COLOR,
-            text_color="#f8f8f2",
-            corner_radius=20
-        )
-        self._themed_widgets.append(manual_scan_button)
-        manual_scan_button.grid(row=0, column=11, padx=10, pady=10)
-        manual_scan_button.bind("<Enter>", lambda e: manual_scan_button.configure(fg_color="#00b0cc"))
-        manual_scan_button.bind("<Leave>", lambda e: manual_scan_button.configure(fg_color=ACCENT_COLOR))
-        self.create_tooltip(manual_scan_button, "Run a full scan for new flips and refresh the table")
 
         # Reload items.txt button
         reload_items_button = AnimatedButton(
@@ -2126,14 +2544,43 @@ class RatFlipperGUI:
             command=self.reload_item_filters,
             width=180,
             height=40,
-            fg_color=ACCENT_COLOR,
+            fg_color="#4a5568",
             text_color="#f8f8f2",
             corner_radius=20
         )
         self._themed_widgets.append(reload_items_button)
         reload_items_button.grid(row=0, column=12, padx=10, pady=10)
         self.create_tooltip(reload_items_button, "Force a reload of the items.txt file")
-        # Webhook Ban System removed - this should be a separate admin tool
+        
+        # Quick management button - fixed position
+        management_btn = AnimatedButton(
+            header_frame,
+            text="🐀 Management",
+            command=self.show_management_popup,
+            width=140,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        self._themed_widgets.append(management_btn)
+        management_btn.grid(row=0, column=13, padx=(5, 10), pady=10, sticky="w")  # Fixed position with sticky="w"
+        self.create_tooltip(management_btn, "Quick access to flip management functions")
+        
+        # Tutorial button - fixed position
+        tutorial_btn = AnimatedButton(
+            header_frame,
+            text="📚 Tutorial",
+            command=self.show_tutorial,
+            width=120,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        self._themed_widgets.append(tutorial_btn)
+        tutorial_btn.grid(row=0, column=14, padx=(5, 10), pady=10, sticky="w")  # Fixed position with sticky="w"
+        self.create_tooltip(tutorial_btn, "Learn how to use Rat Flipper Pro")
 
     def create_stats_panel(self, parent):
         """Create statistics panel for smaller side window"""
@@ -2207,19 +2654,21 @@ class RatFlipperGUI:
         )
         settings_label.pack(pady=12)
         
-        # Save settings button with enhanced styling
-        save_settings_btn = ctk.CTkButton(
+        # Save settings button with header button style
+        save_settings_btn = AnimatedButton(
             settings_header_frame, 
             text="💾 Save Settings", 
             command=self.save_config, 
-            height=36,
-            fg_color="#00d4ff",
-            text_color="#181c24",
-            corner_radius=18,
-            font=("Segoe UI", 12, "bold"),
-            hover_color="#00b0cc"
+            height=40,
+            width=140,
+            fg_color="#4a5268",  # Dark slate like header buttons
+            text_color="#ffffff",
+            hover_color="#5a6278",
+            corner_radius=20,
+            font=("Segoe UI", 11, "bold")
         )
         save_settings_btn.pack(pady=(0, 12))
+        self.create_tooltip(save_settings_btn, "Save all current settings to configuration file")
         
         # --- Divider ---
         divider1 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
@@ -2237,34 +2686,38 @@ class RatFlipperGUI:
         )
         debug_header.pack(pady=(12, 8), padx=12, anchor="w")
         
-        # Debug/log window button
-        debug_btn = ctk.CTkButton(
+        # Debug/log window button with header button style
+        debug_btn = AnimatedButton(
             debug_frame, 
             text="📊 Open Debug/Log Window", 
             command=self.show_log_window, 
-            height=36,
-            fg_color="#232946",
+            height=40,
+            width=200,
+            fg_color="#4a5268",
             text_color="#ffffff",
-            corner_radius=18,
-            font=("Segoe UI", 11),
-            hover_color="#2d3748"
+            hover_color="#5a6278",
+            corner_radius=20,
+            font=("Segoe UI", 11, "bold")
         )
         debug_btn.pack(fill="x", padx=12, pady=(0, 8))
+        self.create_tooltip(debug_btn, "Open a window showing detailed debug logs and system information")
         
         # Debug toggle button
         self.debug_toggle_var = tk.BooleanVar(value=self.debug_enabled)
-        debug_toggle_btn = ctk.CTkButton(
+        debug_toggle_btn = AnimatedButton(
             debug_frame, 
             text="🔧 Toggle Debug Logging", 
             command=self.toggle_debug_logging, 
-            height=36,
-            fg_color="#232946",
+            height=40,
+            width=200,
+            fg_color="#4a5268",
             text_color="#ffffff",
-            corner_radius=18,
-            font=("Segoe UI", 11),
-            hover_color="#2d3748"
+            hover_color="#5a6278",
+            corner_radius=20,
+            font=("Segoe UI", 11, "bold")
         )
         debug_toggle_btn.pack(fill="x", padx=12, pady=(0, 12))
+        self.create_tooltip(debug_toggle_btn, "Enable or disable detailed debug logging for troubleshooting")
         
         # --- Divider ---
         divider2 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
@@ -2282,37 +2735,182 @@ class RatFlipperGUI:
         )
         appearance_header.pack(pady=(12, 8), padx=12, anchor="w")
         
-        # Theme picker button
-        theme_btn = ctk.CTkButton(
-            appearance_frame, 
-            text="🎨 Theme Picker", 
-            command=self.open_theme_picker, 
-            height=36,
-            fg_color="#232946",
-            text_color="#ffffff",
-            corner_radius=18,
-            font=("Segoe UI", 11),
-            hover_color="#2d3748"
-        )
-        theme_btn.pack(fill="x", padx=12, pady=(0, 8))
-        
-        # Background image selection button
-        bg_btn = ctk.CTkButton(
-            appearance_frame, 
-            text="🖼️ Set Background Image", 
-            command=self.set_background_image, 
-            height=36,
-            fg_color="#232946",
-            text_color="#ffffff",
-            corner_radius=18,
-            font=("Segoe UI", 11),
-            hover_color="#2d3748"
-        )
-        bg_btn.pack(fill="x", padx=12, pady=(0, 12))
         
         # --- Divider ---
         divider3 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
         divider3.pack(fill="x", padx=8, pady=8)
+        
+        # Window Settings section
+        window_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        window_frame.pack(fill="x", padx=8, pady=(0, 8))
+        
+        window_header = ctk.CTkLabel(
+            window_frame,
+            text="🪟 Window Settings",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00d4ff"
+        )
+        window_header.pack(pady=(12, 8), padx=12, anchor="w")
+        
+        # Window size controls
+        size_frame = ctk.CTkFrame(window_frame, fg_color="#232946", corner_radius=8)
+        size_frame.pack(fill="x", padx=12, pady=(0, 8))
+        
+        size_label = ctk.CTkLabel(
+            size_frame,
+            text="Window Size:",
+            font=("Segoe UI", 12, "bold"),
+            text_color="#ffffff"
+        )
+        size_label.pack(pady=(12, 8), padx=12, anchor="w")
+        
+        # Size controls frame
+        size_controls_frame = ctk.CTkFrame(size_frame, fg_color="transparent")
+        size_controls_frame.pack(fill="x", padx=12, pady=(0, 8))
+        
+        # Width control
+        width_frame = ctk.CTkFrame(size_controls_frame, fg_color="transparent")
+        width_frame.pack(fill="x", pady=(0, 8))
+        
+        width_label = ctk.CTkLabel(
+            width_frame,
+            text="Width:",
+            font=("Segoe UI", 11),
+            text_color="#a0aec0"
+        )
+        width_label.pack(side="left")
+        
+        self.window_width_var = tk.StringVar(value="1800")
+        width_entry = ctk.CTkEntry(
+            width_frame,
+            textvariable=self.window_width_var,
+            width=100,
+            font=("Segoe UI", 11),
+            fg_color="#1a1d2e",
+            border_color="#2d3748",
+            text_color="#ffffff",
+            corner_radius=6
+        )
+        width_entry.pack(side="left", padx=(8, 4))
+        
+        # Height control
+        height_frame = ctk.CTkFrame(size_controls_frame, fg_color="transparent")
+        height_frame.pack(fill="x", pady=(0, 8))
+        
+        height_label = ctk.CTkLabel(
+            height_frame,
+            text="Height:",
+            font=("Segoe UI", 11),
+            text_color="#a0aec0"
+        )
+        height_label.pack(side="left")
+        
+        self.window_height_var = tk.StringVar(value="1000")
+        height_entry = ctk.CTkEntry(
+            height_frame,
+            textvariable=self.window_height_var,
+            width=100,
+            font=("Segoe UI", 11),
+            fg_color="#1a1d2e",
+            border_color="#2d3748",
+            text_color="#ffffff",
+            corner_radius=6
+        )
+        height_entry.pack(side="left", padx=(8, 4))
+        
+        # Preset sizes
+        preset_frame = ctk.CTkFrame(size_frame, fg_color="transparent")
+        preset_frame.pack(fill="x", padx=12, pady=(0, 12))
+        
+        preset_label = ctk.CTkLabel(
+            preset_frame,
+            text="Quick Presets:",
+            font=("Segoe UI", 11, "bold"),
+            text_color="#a0aec0"
+        )
+        preset_label.pack(anchor="w", pady=(0, 8))
+        
+        # Preset buttons
+        preset_buttons_frame = ctk.CTkFrame(preset_frame, fg_color="transparent")
+        preset_buttons_frame.pack(fill="x")
+        
+        # Small preset
+        small_btn = ctk.CTkButton(
+            preset_buttons_frame,
+            text="Small (1280x720)",
+            command=lambda: self.set_window_size(1280, 720),
+            width=120,
+            height=28,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=14,
+            font=("Segoe UI", 10)
+        )
+        small_btn.pack(side="left", padx=(0, 8))
+        
+        # Medium preset
+        medium_btn = ctk.CTkButton(
+            preset_buttons_frame,
+            text="Medium (1600x900)",
+            command=lambda: self.set_window_size(1600, 900),
+            width=120,
+            height=28,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=14,
+            font=("Segoe UI", 10)
+        )
+        medium_btn.pack(side="left", padx=(0, 8))
+        
+        # Large preset
+        large_btn = ctk.CTkButton(
+            preset_buttons_frame,
+            text="Large (1920x1080)",
+            command=lambda: self.set_window_size(1920, 1080),
+            width=120,
+            height=28,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=14,
+            font=("Segoe UI", 10)
+        )
+        large_btn.pack(side="left", padx=(0, 8))
+        
+        # Ultra preset
+        ultra_btn = ctk.CTkButton(
+            preset_buttons_frame,
+            text="Ultra (2560x1440)",
+            command=lambda: self.set_window_size(2560, 1440),
+            width=120,
+            height=28,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=14,
+            font=("Segoe UI", 10)
+        )
+        ultra_btn.pack(side="left")
+        
+        # Apply size button
+        apply_size_btn = AnimatedButton(
+            size_frame,
+            text="Apply Size",
+            command=self.apply_window_size,
+            height=40,
+            width=120,
+            fg_color="#4a5268",  # Dark slate like header buttons
+            text_color="#ffffff",
+            hover_color="#5a6278",
+            corner_radius=20,
+            font=("Segoe UI", 11, "bold")
+        )
+        apply_size_btn.pack(pady=(0, 12), padx=12)
+        
+        # Update the input fields with current window size
+        self.update_window_size_display()
+        
+        # --- Divider ---
+        divider4 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
+        divider4.pack(fill="x", padx=8, pady=8)
         
         # Notification settings section with enhanced styling
         notification_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
@@ -2477,16 +3075,17 @@ class RatFlipperGUI:
         version_label.pack(pady=8)
         
         # Check for updates button with enhanced styling
-        check_update_btn = ctk.CTkButton(
+        check_update_btn = AnimatedButton(
             parent, 
             text="🔍 Check for Updates", 
             command=self.check_for_updates, 
-            height=36,
-            fg_color="#00d4ff",
-            text_color="#181c24",
-            corner_radius=18,
-            font=("Segoe UI", 12, "bold"),
-            hover_color="#00b0cc"
+            height=40,
+            width=180,
+            fg_color="#4a5268",  # Dark slate like header buttons
+            text_color="#ffffff",
+            hover_color="#5a6278",
+            corner_radius=20,
+            font=("Segoe UI", 11, "bold")
         )
         check_update_btn.pack(fill="x", padx=8, pady=(0, 8))
         
@@ -2526,7 +3125,7 @@ class RatFlipperGUI:
         
         flip_header = ctk.CTkLabel(
             flip_frame,
-            text="🦁 Flip Management",
+            text="🐀 Flip Management",
             font=("Segoe UI", 14, "bold"),
             text_color="#00d4ff"
         )
@@ -2642,18 +3241,27 @@ class RatFlipperGUI:
         controls_frame = ctk.CTkFrame(enchanting_frame, fg_color="transparent")
         controls_frame.pack(fill="x", padx=24, pady=(8, 8))
         
-        price_btn = AnimatedButton(controls_frame, text="Set Rune/Soul/Relic Prices", command=self.input_enchanting_prices, width=220, height=32)
+        price_btn = AnimatedButton(controls_frame, text="Set Rune/Soul/Relic Prices", command=self.input_enchanting_prices, width=220, height=32, fg_color="#4a5568", text_color="#f8f8f2")
         price_btn.grid(row=0, column=0, padx=(0, 20), sticky="w")
+        self.create_tooltip(price_btn, "Set the prices for runes, souls, and relics used in enchanting")
         
-        ctk.CTkLabel(controls_frame, text="Source City:", font=MODERN_FONT).grid(row=0, column=1, padx=(0, 5), sticky="w")
+        source_city_label = ctk.CTkLabel(controls_frame, text="Source City:", font=MODERN_FONT)
+        source_city_label.grid(row=0, column=1, padx=(0, 5), sticky="w")
+        self.create_tooltip(source_city_label, "Select which city to source materials from")
+        
         city_combo = ctk.CTkComboBox(controls_frame, values=['All Cities', 'Brecilien', 'Bridgewatch', 'Lymhurst', 'Fort Sterling', 'Thetford', 'Martlock', 'Caerleon'], variable=self.enchanting_source_city, width=150, font=MODERN_FONT, dropdown_font=MODERN_FONT)
         city_combo.grid(row=0, column=2, padx=(0, 20), sticky="w")
+        self.create_tooltip(city_combo, "Choose the city to buy enchanting materials from")
         
         # Add Min Profit label and entry
-        ctk.CTkLabel(controls_frame, text="Min Profit:", font=MODERN_FONT).grid(row=0, column=3, padx=(0, 5), sticky="w")
+        min_profit_label = ctk.CTkLabel(controls_frame, text="Min Profit:", font=MODERN_FONT)
+        min_profit_label.grid(row=0, column=3, padx=(0, 5), sticky="w")
+        self.create_tooltip(min_profit_label, "Only show enchanting opportunities with profit above this amount")
+        
         min_profit_entry = ctk.CTkEntry(controls_frame, textvariable=self.enchanting_min_profit_var, width=100, font=MODERN_FONT)
         min_profit_entry.grid(row=0, column=4, padx=(0, 20), sticky="w")
         min_profit_entry.bind("<KeyRelease>", lambda e: self.refresh_enchanting_table())
+        self.create_tooltip(min_profit_entry, "Enter minimum profit threshold for enchanting opportunities")
         
         # Table
         columns = ('City', 'Item', 'Quality', 'Path', 'City Price', 'Enchant Cost', 'BM Price', 'Total Profit', 'ROI', 'Last Update', 'Done')
@@ -2713,12 +3321,7 @@ class RatFlipperGUI:
         enchanting_frame.grid_rowconfigure(2, weight=1)
         enchanting_frame.grid_columnconfigure(0, weight=1)
         
-        # Add count label below the table
-        self.enchanting_count_var = tk.StringVar(value="0 of 0 opportunities")
-        enchanting_count_label = ctk.CTkLabel(
-            enchanting_frame, textvariable=self.enchanting_count_var, font=MODERN_FONT, fg_color="#181c24"
-        )
-        enchanting_count_label.pack(anchor="e", padx=24, pady=(0, 8))
+        # Count label removed for cleaner interface
         
         # Bind click events
         self.enchanting_tree.bind("<Button-1>", self.on_enchanting_tree_click)
@@ -2776,7 +3379,7 @@ class RatFlipperGUI:
                         print(f"[ENCHANT TABLE DEBUG] Values: {values}")
                     self.enchanting_tree.insert('', 'end', values=values, tags=(tag,))
                 
-                self.enchanting_count_var.set(f"{len(filtered_opportunities)} of {len(opportunities)} opportunities")
+                # Count display removed for cleaner interface
                 if hasattr(self, 'enchanting_debug_log'):
                     self.enchanting_debug_log.appendleft(f"[{datetime.now().strftime('%H:%M:%S')}] Refreshed enchanting table: {len(filtered_opportunities)} opportunities displayed.")
             except Exception as e:
@@ -2955,19 +3558,33 @@ class RatFlipperGUI:
 
         filter_frame = ctk.CTkFrame(results_frame, fg_color="transparent")
         filter_frame.pack(fill="x", padx=24, pady=(8, 8))
+        # Allow right-side widgets (like Screen on top) to stick to the edge
+        filter_frame.grid_columnconfigure(9, weight=1)
         
         # Using grid layout instead of pack for more predictable alignment
-        ctk.CTkLabel(filter_frame, text="City:", font=MODERN_FONT).grid(row=0, column=0, padx=(0, 5), sticky="w")
+        city_label = ctk.CTkLabel(filter_frame, text="City:", font=MODERN_FONT)
+        city_label.grid(row=0, column=0, padx=(0, 5), sticky="w")
+        self.create_tooltip(city_label, "Filter flips by city location")
+        
         city_filter_combo = ctk.CTkComboBox(filter_frame, values=["All", 'Brecilien', 'Bridgewatch', 'Lymhurst', 'Fort Sterling', 'Thetford', 'Martlock', 'Caerleon'], variable=self.filter_city_var, command=self.apply_filters_and_refresh, width=150, font=MODERN_FONT, dropdown_font=MODERN_FONT)
         city_filter_combo.grid(row=0, column=1, padx=(0, 20), sticky="w")
+        self.create_tooltip(city_filter_combo, "Select which city to show flips for")
 
-        ctk.CTkLabel(filter_frame, text="Quality:", font=MODERN_FONT).grid(row=0, column=2, padx=(0, 5), sticky="w")
+        quality_label = ctk.CTkLabel(filter_frame, text="Quality:", font=MODERN_FONT)
+        quality_label.grid(row=0, column=2, padx=(0, 5), sticky="w")
+        self.create_tooltip(quality_label, "Filter flips by item quality")
+        
         quality_filter_combo = ctk.CTkComboBox(filter_frame, values=["All", "Normal", "Good", "Outstanding", "Excellent", "Masterpiece"], variable=self.filter_quality_var, command=self.apply_filters_and_refresh, width=150, font=MODERN_FONT, dropdown_font=MODERN_FONT)
         quality_filter_combo.grid(row=0, column=3, padx=(0, 20), sticky="w")
+        self.create_tooltip(quality_filter_combo, "Select which item quality to show")
 
-        ctk.CTkLabel(filter_frame, text="Tier:", font=MODERN_FONT).grid(row=0, column=4, padx=(0, 5), sticky="w")
+        tier_label = ctk.CTkLabel(filter_frame, text="Tier:", font=MODERN_FONT)
+        tier_label.grid(row=0, column=4, padx=(0, 5), sticky="w")
+        self.create_tooltip(tier_label, "Filter flips by item tier")
+        
         tier_filter_combo = ctk.CTkComboBox(filter_frame, values=["All"] + [str(i) for i in range(4, 9)], variable=self.filter_tier_var, command=self.apply_filters_and_refresh, width=100, font=MODERN_FONT, dropdown_font=MODERN_FONT)
         tier_filter_combo.grid(row=0, column=5, padx=(0, 20), sticky="w")
+        self.create_tooltip(tier_filter_combo, "Select which item tier to show")
 
         ctk.CTkLabel(filter_frame, text="Min Profit:", font=MODERN_FONT).grid(row=0, column=6, padx=(20, 5), sticky="w")
         
@@ -2981,8 +3598,23 @@ class RatFlipperGUI:
         min_profit_entry.bind("<KeyRelease>", self.apply_filters_and_refresh)
         self.create_tooltip(min_profit_entry, "Only show flips with profit greater than this amount.")
 
-        clear_filters_btn = AnimatedButton(filter_frame, text="Clear Filters", command=self.clear_filters, width=120, height=30)
+        clear_filters_btn = AnimatedButton(filter_frame, text="Clear Filters", command=self.clear_filters, width=120, height=30, fg_color="#4a5568", text_color="#f8f8f2")
         clear_filters_btn.grid(row=0, column=8, padx=(20, 0), sticky="w")
+        self.create_tooltip(clear_filters_btn, "Reset all filters to show all flips")
+
+        # Sliding-style animated button to keep the screen on top (top-right corner of Flips tab)
+        self.screen_on_top_button = AnimatedButton(
+            filter_frame,
+            text="Screen on top",
+            command=self.toggle_screen_on_top,
+            width=140,
+            height=30,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=18
+        )
+        self.screen_on_top_button.grid(row=0, column=10, padx=(20, 0), sticky="e")
+        self.create_tooltip(self.screen_on_top_button, "Keep Rat Flipper Pro window always on top")
 
         # Configure style BEFORE creating treeview
         style = ttk.Style()
@@ -3024,10 +3656,14 @@ class RatFlipperGUI:
             'Price Age (BM/R)': (140, 'center'),
             'Done': (70, 'center'),
         }
+        # Column tooltips removed to prevent floating issues
+        
         for col, (width, anchor) in col_config.items():
             anchor_val = 'center' if anchor == 'center' else 'w'
             self.tree.heading(col, text=col, anchor=anchor_val, command=lambda c=col: self.sort_by_column(c, False))
             self.tree.column(col, width=width, anchor=anchor_val, minwidth=60, stretch=True)
+            
+            # Tooltips removed to prevent floating issues
         self.tree.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.tree.configure(height=17)
         self.tree.master.update_idletasks()
@@ -3052,31 +3688,9 @@ class RatFlipperGUI:
                     self.tree.item(rowid, tags=tuple(t for t in tags if t != 'hover'))
         self.tree.bind('<Motion>', on_row_enter)
         self.tree.bind('<Leave>', on_row_leave)
-        # Button frame with glass effect
-        button_frame = ctk.CTkFrame(results_frame, fg_color="#232946", corner_radius=18)
-        self._themed_widgets.append(button_frame)
-        button_frame.pack(fill="x", padx=24, pady=(0, 24))
-        export_btn = AnimatedButton(
-            button_frame, text="💾  Export CSV", command=self.export_opportunities, width=140, height=40, fg_color=ACCENT_COLOR, text_color="#181c24", corner_radius=20
-        )
-        self._themed_widgets.append(export_btn)
-        # export_btn.pack(side="left", padx=10)  # Hidden as per user request
-        export_btn.pack_forget()
-        clear_btn = AnimatedButton(
-            button_frame, text="🗑️  Clear All", command=self.clear_results, width=140, height=40, fg_color=ACCENT_COLOR, text_color="#181c24", corner_radius=20
-        )
-        self._themed_widgets.append(clear_btn)
-        # clear_btn.pack(side="left", padx=10)  # Hidden as per user request
-        clear_btn.pack_forget()
-        clear_btn.bind("<Enter>", lambda e: clear_btn.configure(fg_color="#00b0cc"))
-        clear_btn.bind("<Leave>", lambda e: clear_btn.configure(fg_color=ACCENT_COLOR))
-        self.create_tooltip(clear_btn, "Clear all results")
-        self.results_count_var = tk.StringVar(value="0 opportunities")
-        count_label = ctk.CTkLabel(
-            button_frame, textvariable=self.results_count_var, font=MODERN_FONT, fg_color="#181c24"
-        )
-        self._themed_widgets.append(count_label)
-        count_label.pack(side="right", padx=12)
+        # Button frame removed to fill space properly
+        
+        # Results count removed for cleaner interface
         self.tree.bind('<Button-1>', self.on_tree_click)
         self.tree.bind('<Button-3>', self.show_context_menu)
         self.tree.bind('<Double-1>', self.on_item_double_click)
@@ -3087,6 +3701,9 @@ class RatFlipperGUI:
         for row in self.tree.get_children():
             self.tree.delete(row)
         
+        # Clear any existing empty state
+        self._clear_empty_state()
+        
         # Apply current sort before filtering (without triggering UI update)
         if hasattr(self, 'sort_column') and hasattr(self, 'sort_reverse'):
             self._apply_current_sort()
@@ -3094,6 +3711,11 @@ class RatFlipperGUI:
         filtered_opportunities = self._get_filtered_opportunities()
         if self.debug_enabled:
             print(f"[DEBUG] _update_results_display called: displaying {len(filtered_opportunities)} rows out of {len(self.flip_opportunities)} total opportunities.")
+        
+        # Show empty state if no opportunities
+        if not filtered_opportunities:
+            self._show_empty_state()
+            return
         for i, opp in enumerate(filtered_opportunities):
             item_name = self.item_manager.get_display_name(opp.item_name)
             quality_name = QUALITY_LEVEL_NAMES.get(opp.bm_quality, f"Q{opp.bm_quality}")
@@ -3145,7 +3767,137 @@ class RatFlipperGUI:
             if self.debug_enabled:
                 print(f"[DEBUG] Inserting row: {values}")
             self.tree.insert('', 'end', values=values, tags=(tag,))
-        self.results_count_var.set(f"{len(filtered_opportunities)} of {len(self.flip_opportunities)} opportunities")
+        # Results count removed for cleaner interface
+
+    def _show_empty_state(self):
+        """Show empty state when no flips are found"""
+        # Clear any existing empty state
+        if hasattr(self, 'empty_state_widget'):
+            self.empty_state_widget.destroy()
+            delattr(self, 'empty_state_widget')
+        
+        # Determine the appropriate empty state message
+        if not self.flip_opportunities:
+            # No data at all - show animated searching state
+            self._show_searching_state()
+        else:
+            # Data exists but filtered out
+            icon = "🔍"
+            title = "No flips match your filters"
+            message = "Try adjusting your filters to see more opportunities."
+            action_text = "Clear Filters"
+            action_callback = self.clear_filters
+            
+            # Create empty state widget
+            self.empty_state_widget = EmptyState(
+                self.tree.master,
+                icon=icon,
+                title=title,
+                message=message,
+                action_text=action_text,
+                action_callback=action_callback
+            )
+            
+            # Position it in the tree area, but make sure it's above the table
+            self.empty_state_widget.place(relx=0.5, rely=0.5, anchor="center")
+            self.empty_state_widget.lift()  # Bring to front
+    
+    def _show_searching_state(self):
+        """Show animated searching state with fixed original colors"""
+        # Create searching state widget
+        self.empty_state_widget = ctk.CTkFrame(self.tree.master, fg_color="transparent")
+        self.empty_state_widget.place(relx=0.5, rely=0.5, anchor="center")
+        self.empty_state_widget.lift()  # Bring to front
+        
+        # Animated magnifying glass icon with fixed cyan color
+        self.searching_icon = ctk.CTkLabel(
+            self.empty_state_widget,
+            text="🔍",
+            font=("Segoe UI", 48),
+            text_color="#00d4ff"  # Fixed cyan color, not affected by theme
+        )
+        self.searching_icon.pack(pady=(20, 10))
+        
+        # Animated title with fixed white color
+        self.searching_title = ctk.CTkLabel(
+            self.empty_state_widget,
+            text="",
+            font=("Segoe UI", 18, "bold"),
+            text_color="#ffffff"  # Fixed white color, not affected by theme
+        )
+        self.searching_title.pack(pady=(0, 8))
+        
+        # Message with fixed light gray color
+        message_label = ctk.CTkLabel(
+            self.empty_state_widget,
+            text="We're scanning the market for profitable flips. This may take a moment.",
+            font=("Segoe UI", 12),
+            text_color="#a0a0a0",  # Fixed light gray, not affected by theme
+            wraplength=300
+        )
+        message_label.pack(pady=(0, 20))
+        
+        # Start animations
+        self._start_searching_animations()
+    
+    def _start_searching_animations(self):
+        """Start the searching animations"""
+        # Animate the magnifying glass rotation
+        def animate_icon(step=0):
+            try:
+                if (hasattr(self, 'searching_icon') and 
+                    hasattr(self, 'empty_state_widget') and
+                    self.searching_icon.winfo_exists() and 
+                    self.empty_state_widget.winfo_exists()):
+                    rotation_chars = ['🔍', '🔎', '🔍', '🔎']
+                    char = rotation_chars[step % len(rotation_chars)]
+                    # SUPER AGGRESSIVE color preservation during animation
+                    self.searching_icon.configure(text=char)
+                    self.searching_icon.configure(text_color="#00d4ff")  # Force cyan
+                    self.searching_icon.configure(fg_color="transparent")  # No background
+                    self.searching_icon.configure(bg_color="transparent")  # No background
+                    self.searching_icon.update()  # Force redraw
+                    # Multiple color applications to ensure it sticks
+                    self.searching_icon.configure(text_color="#00d4ff")
+                    self.empty_state_widget.after(500, lambda: animate_icon(step + 1))
+            except:
+                # Stop animation if widgets are destroyed
+                pass
+        
+        # Animate the title text
+        def animate_title(step=0):
+            try:
+                if (hasattr(self, 'searching_title') and 
+                    hasattr(self, 'empty_state_widget') and
+                    self.searching_title.winfo_exists() and 
+                    self.empty_state_widget.winfo_exists()):
+                    base_text = "Searching for opportunities"
+                    dots = "." * ((step % 4) + 1)
+                    # Force preserve all colors during animation
+                    self.searching_title.configure(
+                        text=f"{base_text}{dots}", 
+                        text_color="#ffffff",  # Force white color
+                        fg_color="transparent"  # Ensure no background
+                    )
+                    self.empty_state_widget.after(300, lambda: animate_title(step + 1))
+            except:
+                # Stop animation if widgets are destroyed
+                pass
+        
+        animate_icon()
+        animate_title()
+    
+    def _clear_empty_state(self):
+        """Clear empty state when data appears"""
+        if hasattr(self, 'empty_state_widget'):
+            self.empty_state_widget.destroy()
+            delattr(self, 'empty_state_widget')
+        
+        # Also clear searching animations
+        if hasattr(self, 'searching_icon'):
+            delattr(self, 'searching_icon')
+        if hasattr(self, 'searching_title'):
+            delattr(self, 'searching_title')
 
     def create_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -3244,9 +3996,44 @@ class RatFlipperGUI:
         self._update_results_display()
 
     def clear_results(self):
-        self.flip_opportunities = []
-        self.completed_flips.clear()
-        self._update_results_display()
+        """Clear all flip opportunities and completed flips data"""
+        try:
+            # Show confirmation dialog
+            result = messagebox.askyesno(
+                "Clear All Flips", 
+                "Are you sure you want to clear all flip opportunities and completed flips?\n\nThis action cannot be undone.",
+                icon='warning'
+            )
+            
+            if not result:
+                return
+            
+            # Clear current opportunities
+            self.flip_opportunities = []
+            
+            # Clear completed flips set
+            self.completed_flips.clear()
+            
+            # Clear completed flips history
+            self.completed_flips_history = []
+            
+            # Save the cleared data to file
+            self.save_completed_flips()
+            
+            # Update the results display
+            self._update_results_display()
+            
+            # Update analytics if available
+            if hasattr(self, 'refresh_analytics_tab'):
+                self.refresh_analytics_tab()
+            
+            # Show success message
+            messagebox.showinfo("Success", "All flips and completed flips have been cleared successfully!")
+            print("✅ All flips and completed flips have been cleared")
+            
+        except Exception as e:
+            print(f"❌ Error clearing flips: {e}")
+            messagebox.showerror("Error", f"Failed to clear flips: {e}")
 
     def apply_filters_and_refresh(self, _=None):
         """Callback for filter changes. Refreshes the view."""
@@ -3338,16 +4125,21 @@ class RatFlipperGUI:
 
     def on_nats_connection_change(self, connected: bool, info: str):
         def update_ui():
-            if connected:
-                self.connection_label.configure(
-                    text="🟢 Connected",
-                    text_color="green"
-                )
-            else:
-                self.connection_label.configure(
-                    text="🔴 Disconnected",
-                    text_color="red"
-                )
+            try:
+                if hasattr(self, 'connection_label') and self.connection_label.winfo_exists():
+                    if connected:
+                        self.connection_label.configure(
+                            text="🟢 Connected",
+                            text_color="green"
+                        )
+                    else:
+                        self.connection_label.configure(
+                            text="🔴 Disconnected",
+                            text_color="red"
+                        )
+            except:
+                # Widget might be destroyed, ignore
+                pass
         self.root.after(0, update_ui)
 
     def on_nats_message(self, message):
@@ -3415,30 +4207,260 @@ class RatFlipperGUI:
         self.root.after(0, self.reload_item_filters)
 
     def on_closing(self):
+        """Handle application closing with farewell animation"""
         try:
-            if self.file_observer:
-                self.file_observer.stop()
-                self.file_observer.join()
-            if self.event_loop and self.nats_client:
-                # Wait for disconnect to finish before stopping the loop
-                fut = asyncio.run_coroutine_threadsafe(
-                    self.nats_client.disconnect(),
-                    self.event_loop
-                )
+            # Start the closing animation
+            self._start_closing_animation()
+        except Exception as e:
+            logger.error(f"Error during closing animation: {e}")
+            self._force_close()
+    
+    def _start_closing_animation(self):
+        """Start the farewell closing animation"""
+        try:
+            # Create farewell window
+            self.farewell_window = ctk.CTkToplevel(self.root)
+            self.farewell_window.title("")
+            self.farewell_window.geometry("500x300")
+            self.farewell_window.configure(fg_color="#1a1a1a")
+            self.farewell_window.attributes('-alpha', 0.0)
+            self.farewell_window.overrideredirect(True)  # Remove window decorations
+            
+            # Center the window
+            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
+            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
+            self.farewell_window.geometry(f"500x300+{x}+{y}")
+            
+            # Create content frame
+            content_frame = ctk.CTkFrame(self.farewell_window, fg_color="transparent")
+            content_frame.pack(expand=True, fill="both", padx=20, pady=20)
+            
+            # App logo/icon (if available)
+            logo_label = ctk.CTkLabel(
+                content_frame,
+                text="🐀",
+                font=("Segoe UI", 48, "bold"),
+                text_color="#00d4ff"
+            )
+            logo_label.pack(pady=(20, 10))
+            
+            # Farewell message
+            farewell_label = ctk.CTkLabel(
+                content_frame,
+                text="I hope you enjoyed your flipping session!\nSee ya next time!",
+                font=("Segoe UI", 16, "bold"),
+                text_color="#ffffff",
+                justify="center"
+            )
+            farewell_label.pack(pady=20)
+            
+            # Progress indicator
+            progress_label = ctk.CTkLabel(
+                content_frame,
+                text="Closing application...",
+                font=("Segoe UI", 12),
+                text_color="#888888"
+            )
+            progress_label.pack(pady=10)
+            
+            # Start the animation sequence
+            self._animate_farewell()
+            
+        except Exception as e:
+            logger.error(f"Error creating farewell window: {e}")
+            self._force_close()
+    
+    def _animate_farewell(self):
+        """Animate the farewell sequence"""
+        try:
+            # Fade in the farewell window
+            self._fade_in_farewell()
+            
+            # Start background cleanup while animation plays
+            self._start_background_cleanup()
+            
+        except Exception as e:
+            logger.error(f"Error in farewell animation: {e}")
+            self._force_close()
+    
+    def _fade_in_farewell(self):
+        """Fade in the farewell window"""
+        def fade_in(alpha=0.0):
+            if alpha < 1.0:
+                self.farewell_window.attributes('-alpha', alpha)
+                self.farewell_window.after(20, lambda: fade_in(alpha + 0.05))
+            else:
+                self.farewell_window.attributes('-alpha', 1.0)
+                # Start fade out after showing for 2 seconds
+                self.farewell_window.after(2000, self._fade_out_farewell)
+        fade_in()
+    
+    def _fade_out_farewell(self):
+        """Fade out the farewell window and close app"""
+        def fade_out(alpha=1.0):
+            if alpha > 0.0:
+                self.farewell_window.attributes('-alpha', alpha)
+                self.farewell_window.after(20, lambda: fade_out(alpha - 0.05))
+            else:
+                self.farewell_window.attributes('-alpha', 0.0)
+                # Close the farewell window and force close the app
                 try:
-                    fut.result(timeout=5)  # Wait up to 5 seconds for disconnect
-                except Exception as e:
-                    # Suppress RuntimeError: Event loop stopped before Future completed (shutdown race)
-                    if not (isinstance(e, RuntimeError) and 'Event loop stopped before Future completed' in str(e)):
-                        logger.error(f"Error waiting for NATS disconnect: {e}")
-            if self.event_loop:
-                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                    self.farewell_window.destroy()
+                except:
+                    pass
+                self._force_close()
+        fade_out()
+    
+    def _start_background_cleanup(self):
+        """Start background cleanup while animation plays"""
+        def cleanup():
+            try:
+                if self.file_observer:
+                    self.file_observer.stop()
+                    self.file_observer.join()
+                if self.event_loop and self.nats_client:
+                    # Wait for disconnect to finish before stopping the loop
+                    fut = asyncio.run_coroutine_threadsafe(
+                        self.nats_client.disconnect(),
+                        self.event_loop
+                    )
+                    try:
+                        fut.result(timeout=3)  # Reduced timeout for faster cleanup
+                    except Exception as e:
+                        # Suppress RuntimeError: Event loop stopped before Future completed (shutdown race)
+                        if not (isinstance(e, RuntimeError) and 'Event loop stopped before Future completed' in str(e)):
+                            logger.error(f"Error waiting for NATS disconnect: {e}")
+                if self.event_loop:
+                    self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+            except Exception as e:
+                logger.error(f"Error during background cleanup: {e}")
+        
+        # Run cleanup in a separate thread to not block the animation
+        import threading
+        cleanup_thread = threading.Thread(target=cleanup, daemon=True)
+        cleanup_thread.start()
+    
+    def _force_close(self):
+        """Force close the application"""
+        try:
+            if hasattr(self, 'farewell_window') and self.farewell_window:
+                try:
+                    self.farewell_window.destroy()
+                except:
+                    pass
             self.root.destroy()
         except Exception as e:
-            # Suppress RuntimeError: Event loop stopped before Future completed (shutdown race)
-            if not (isinstance(e, RuntimeError) and 'Event loop stopped before Future completed' in str(e)):
-                logger.error(f"Error during cleanup: {e}")
-            self.root.destroy()
+            logger.error(f"Error during force close: {e}")
+            try:
+                self.root.quit()
+            except:
+                pass
+
+    def synchronize_animations(self, widgets, animation_type="fade", delay=50):
+        """Synchronize animations across multiple widgets"""
+        try:
+            if animation_type == "fade":
+                self._synchronized_fade(widgets, delay)
+            elif animation_type == "scale":
+                self._synchronized_scale(widgets, delay)
+            elif animation_type == "slide":
+                self._synchronized_slide(widgets, delay)
+        except Exception as e:
+            logger.error(f"Error in synchronized animations: {e}")
+    
+    def _synchronized_fade(self, widgets, delay):
+        """Synchronized fade animation for multiple widgets"""
+        def fade_widgets(alpha=0.0, direction=1):
+            if direction == 1 and alpha < 1.0:
+                for widget in widgets:
+                    try:
+                        if hasattr(widget, 'configure'):
+                            widget.configure(alpha=alpha)
+                    except:
+                        pass
+                self.root.after(20, lambda: fade_widgets(alpha + 0.05, direction))
+            elif direction == -1 and alpha > 0.0:
+                for widget in widgets:
+                    try:
+                        if hasattr(widget, 'configure'):
+                            widget.configure(alpha=alpha)
+                    except:
+                        pass
+                self.root.after(20, lambda: fade_widgets(alpha - 0.05, direction))
+        
+        # Start fade in
+        fade_widgets(0.0, 1)
+    
+    def _synchronized_scale(self, widgets, delay):
+        """Synchronized scale animation for multiple widgets"""
+        def scale_widgets(scale=1.0, direction=1):
+            if direction == 1 and scale < 1.1:
+                for widget in widgets:
+                    try:
+                        # Apply scale transformation if supported
+                        if hasattr(widget, 'configure'):
+                            # This would need custom implementation for scaling
+                            pass
+                    except:
+                        pass
+                self.root.after(delay, lambda: scale_widgets(scale + 0.02, direction))
+            elif direction == -1 and scale > 1.0:
+                for widget in widgets:
+                    try:
+                        # Apply scale transformation if supported
+                        if hasattr(widget, 'configure'):
+                            # This would need custom implementation for scaling
+                            pass
+                    except:
+                        pass
+                self.root.after(delay, lambda: scale_widgets(scale - 0.02, direction))
+        
+        # Start scale animation
+        scale_widgets(1.0, 1)
+    
+    def _synchronized_slide(self, widgets, delay):
+        """Synchronized slide animation for multiple widgets"""
+        def slide_widgets(offset=0, direction=1):
+            if direction == 1 and offset < 20:
+                for widget in widgets:
+                    try:
+                        # Apply slide transformation if supported
+                        if hasattr(widget, 'configure'):
+                            # This would need custom implementation for sliding
+                            pass
+                    except:
+                        pass
+                self.root.after(delay, lambda: slide_widgets(offset + 1, direction))
+            elif direction == -1 and offset > 0:
+                for widget in widgets:
+                    try:
+                        # Apply slide transformation if supported
+                        if hasattr(widget, 'configure'):
+                            # This would need custom implementation for sliding
+                            pass
+                    except:
+                        pass
+                self.root.after(delay, lambda: slide_widgets(offset - 1, direction))
+        
+        # Start slide animation
+        slide_widgets(0, 1)
+    
+    def optimize_animation_timing(self):
+        """Optimize animation timing for maximum smoothness"""
+        try:
+            # Set optimal values for smooth animations
+            self._animation_delay = 10  # Fast but smooth
+            self._animation_steps = 3   # Minimal steps for responsiveness
+            self._tab_switch_delay = 5  # Ultra-fast tab switching
+            
+            # Disable complex animations that cause lag
+            self._disable_heavy_animations = True
+            
+        except Exception as e:
+            logger.error(f"Error optimizing animation timing: {e}")
+            # Ultra-fast defaults
+            self._animation_delay = 10
+            self._animation_steps = 3
 
     def toggle_theme(self):
         # Always keep dark theme
@@ -3588,6 +4610,24 @@ class RatFlipperGUI:
                 self.notification_min_profit.set(notification_min_profit)
                 self.notification_cooldown_var.set(notification_cooldown)
                 
+                # Load window size settings
+                window_width = cfg.get("window_width", "1800")
+                window_height = cfg.get("window_height", "1000")
+                if hasattr(self, 'window_width_var'):
+                    self.window_width_var.set(window_width)
+                if hasattr(self, 'window_height_var'):
+                    self.window_height_var.set(window_height)
+                
+                # Apply the loaded window size
+                try:
+                    width = int(window_width)
+                    height = int(window_height)
+                    if 800 <= width <= 4000 and 600 <= height <= 3000:
+                        self.root.geometry(f"{width}x{height}")
+                        print(f"🪟 Applied saved window size: {width}x{height}")
+                except (ValueError, TypeError):
+                    print("⚠️ Invalid window size in config, using default")
+                
                 # Load auto-updater settings
                 auto_check_updates = cfg.get("auto_check_updates", True)
                 if hasattr(self, 'auto_check_updates'):
@@ -3595,6 +4635,7 @@ class RatFlipperGUI:
                 self.auto_updater.enabled = cfg.get("updater_enabled", True)
                 
                 print(f"✅ Loaded notification settings: enabled={notifications_enabled}, min_profit={notification_min_profit}, cooldown={notification_cooldown}s")
+                print(f"✅ Loaded window size settings: {window_width}x{window_height}")
         except Exception as e:
             print(f"❌ Error loading config: {e}")
             # Use defaults if config file doesn't exist or is corrupted
@@ -3607,6 +4648,8 @@ class RatFlipperGUI:
                 "notifications_enabled": self.notifications_enabled.get(),
                 "notification_min_profit": self.notification_min_profit.get(),
                 "notification_cooldown": self.notification_cooldown_var.get(),
+                "window_width": self.window_width_var.get() if hasattr(self, 'window_width_var') else "1800",
+                "window_height": self.window_height_var.get() if hasattr(self, 'window_height_var') else "1000",
                 "auto_check_updates": self.auto_check_updates.get() if hasattr(self, 'auto_check_updates') else True,
                 "updater_enabled": self.auto_updater.enabled
             }
@@ -3638,39 +4681,374 @@ class RatFlipperGUI:
             self.refresh_ui()
 
     def open_theme_picker(self):
+        """Open theme picker to change the entire app theme"""
         picker = tk.Toplevel(self.root)
-        picker.title("Pick Font Color")
-        picker.geometry("340x120")
-        picker.configure(bg="#181c24")  # black background
+        picker.title("Choose Theme")
+        picker.geometry("400x200")
+        picker.configure(bg="#181c24")
         picker.attributes('-topmost', True)
         picker.attributes('-alpha', 0.0)
         picker.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 340) // 2
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
         y = self.root.winfo_y() + 120
-        picker.geometry(f"340x120+{x}+{y+40}")
+        picker.geometry(f"400x200+{x}+{y+40}")
+        
         def slide_and_fade(alpha=0.0, dy=40):
             if alpha < 1.0 or dy > 0:
                 picker.attributes('-alpha', min(1.0, alpha))
-                picker.geometry(f"340x120+{x}+{y+dy}")
+                picker.geometry(f"400x200+{x}+{y+dy}")
                 picker.after(12, lambda: slide_and_fade(alpha + 0.08, max(0, dy - 4)))
             else:
                 picker.attributes('-alpha', 1.0)
-                picker.geometry(f"340x120+{x}+{y}")
+                picker.geometry(f"400x200+{x}+{y}")
         slide_and_fade()
-        label = ctk.CTkLabel(picker, text="Choose Font Color:", font=MODERN_FONT, text_color="#fafafa")
-        label.pack(pady=8)
-        colors = ["#f8f8f2", "#ffeb3b", "#ff4b91", "#00d4ff", "#00ff99", "#ffb300", "#a259ff", "#ff5757", "#00b894"]
-        btns = []
-        def set_color(c):
-            self.current_font_color = c
-            self.apply_background_image()
+        
+        # Title
+        title_label = ctk.CTkLabel(picker, text="🎨 Choose Theme", font=("Segoe UI", 16, "bold"), text_color=ACCENT_COLOR)
+        title_label.pack(pady=12)
+        
+        # Theme options
+        themes_frame = ctk.CTkFrame(picker, fg_color="transparent")
+        themes_frame.pack(pady=8)
+        
+        # Define theme palettes
+        themes = {
+            "Ocean Blue": {
+                'bg': '#0f1419',
+                'panel': '#1a2332',
+                'accent': '#00d4ff',
+                'text': '#e6f3ff'
+            },
+            "Royal Purple": {
+                'bg': '#1a0f2e',
+                'panel': '#2d1a4a',
+                'accent': '#8b5cf6',
+                'text': '#f3e8ff'
+            },
+            "Forest Green": {
+                'bg': '#0f1a0f',
+                'panel': '#1a2d1a',
+                'accent': '#10b981',
+                'text': '#e6f7e6'
+            },
+            "Crimson Red": {
+                'bg': '#1a0f0f',
+                'panel': '#2d1a1a',
+                'accent': '#ef4444',
+                'text': '#ffe6e6'
+            },
+            "Sunset Orange": {
+                'bg': '#1a140f',
+                'panel': '#2d221a',
+                'accent': '#f59e0b',
+                'text': '#fff7e6'
+            },
+            "Rose Pink": {
+                'bg': '#1a0f14',
+                'panel': '#2d1a22',
+                'accent': '#ec4899',
+                'text': '#ffe6f0'
+            }
+        }
+        
+        def apply_theme(theme_name, theme_colors):
+            # Update the global palette
+            global DARK_PALETTE
+            DARK_PALETTE.update(theme_colors)
+            
+            # Update accent color
+            global ACCENT_COLOR
+            ACCENT_COLOR = theme_colors['accent']
+            
+            # Update all UI elements with new theme
+            self._apply_complete_theme(theme_colors)
+            
+            # Refresh the UI
             self.refresh_ui()
-            self.theme_btn.configure(text_color=c)
             picker.destroy()
-        for i, c in enumerate(colors):
-            b = AnimatedButton(picker, text="", width=36, height=36, fg_color=c, corner_radius=18, command=lambda c=c: set_color(c))
-            b.pack(side="left", padx=8, pady=8)
-            btns.append(b)
+            
+            # Toast notification removed per user request
+        
+        # Create theme buttons
+        row = 0
+        col = 0
+        for theme_name, theme_colors in themes.items():
+            theme_btn = AnimatedButton(
+                themes_frame,
+                text=theme_name,
+                command=lambda name=theme_name, colors=theme_colors: apply_theme(name, colors),
+                width=120,
+                height=40,
+                fg_color=theme_colors['accent'],
+                text_color='#ffffff',
+                font=("Segoe UI", 10, "bold")
+            )
+            theme_btn.grid(row=row, column=col, padx=8, pady=4)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+
+    def _apply_complete_theme(self, theme_colors):
+        """Apply theme to all UI elements comprehensively"""
+        try:
+            # Update root background
+            self.root.configure(bg=theme_colors['bg'])
+            
+            # Update main content area
+            if hasattr(self, 'main_frame'):
+                self.main_frame.configure(fg_color=theme_colors['panel'])
+            
+            # Update sidebar
+            if hasattr(self, 'sidebar'):
+                self.sidebar.configure(fg_color=theme_colors['panel'])
+            
+            # Update all themed widgets
+            for widget in self._themed_widgets:
+                try:
+                    if isinstance(widget, ctk.CTkFrame):
+                        widget.configure(fg_color=theme_colors['panel'])
+                    elif isinstance(widget, ctk.CTkLabel):
+                        widget.configure(text_color=theme_colors['text'])
+                    elif isinstance(widget, AnimatedButton):
+                        # Update button colors but preserve their distinct styling
+                        if widget in [self.flips_btn, self.analytics_btn, self.demands_btn, self.enchanting_btn, self.settings_btn]:
+                            # Keep sidebar buttons distinct with theme colors
+                            widget.configure(
+                                fg_color="#1a1d2e",
+                                border_color=theme_colors['accent'],  # Use theme accent color
+                                text_color="#ffffff"
+                            )
+                        else:
+                            # Update other buttons with theme
+                            widget.configure(
+                                fg_color=theme_colors['accent'],
+                                text_color="#ffffff"
+                            )
+                    elif isinstance(widget, ctk.CTkComboBox):
+                        widget.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                except Exception as e:
+                    print(f"⚠️ Error updating widget: {e}")
+                    continue
+            
+            # Update Settings tab specific elements
+            self._update_settings_tab_theme(theme_colors)
+            
+            # Update treeview style
+            if hasattr(self, 'tree'):
+                style = ttk.Style()
+                style.configure('Custom.Treeview',
+                                background=theme_colors['panel'],
+                                fieldbackground=theme_colors['panel'],
+                                foreground=theme_colors['text'])
+                style.configure('Custom.Treeview.Heading',
+                                background=theme_colors['bg'],
+                                foreground=theme_colors['accent'])
+                style.map('Custom.Treeview',
+                          background=[('selected', theme_colors['accent']), ('active', theme_colors['panel'])],
+                          foreground=[('selected', '#ffffff'), ('active', theme_colors['accent'])])
+            
+            # Update status bar
+            if hasattr(self, 'status_var'):
+                self.status_var.set(f"✅ Theme changed to {theme_colors['accent']}")
+            
+            # Force update main content areas (simplified to prevent conflicts)
+            self.root.after(200, lambda: self._force_update_main_content(theme_colors))
+            
+            # Theme enforcement removed to prevent conflicts during multiple theme switches
+                
+        except Exception as e:
+            print(f"❌ Error applying complete theme: {e}")
+    
+    def _preserve_searching_state_colors(self):
+        """Preserve the original colors of searching state elements"""
+        try:
+            # Preserve magnifying glass color
+            if hasattr(self, 'searching_icon') and self.searching_icon.winfo_exists():
+                self.searching_icon.configure(text_color="#00d4ff")  # Keep cyan
+            
+            # Preserve title color
+            if hasattr(self, 'searching_title') and self.searching_title.winfo_exists():
+                self.searching_title.configure(text_color="#ffffff")  # Keep white
+                
+        except Exception as e:
+            print(f"⚠️ Error preserving searching state colors: {e}")
+    
+    def _force_preserve_magnifying_glass(self):
+        """Force preserve magnifying glass colors after theme changes"""
+        try:
+            # Force preserve magnifying glass color multiple times
+            if hasattr(self, 'searching_icon') and self.searching_icon.winfo_exists():
+                self.searching_icon.configure(text_color="#00d4ff")  # Force cyan
+                self.searching_icon.configure(fg_color="transparent")  # Ensure no background
+                
+            # Force preserve title color
+            if hasattr(self, 'searching_title') and self.searching_title.winfo_exists():
+                self.searching_title.configure(text_color="#ffffff")  # Force white
+                self.searching_title.configure(fg_color="transparent")  # Ensure no background
+                
+        except Exception as e:
+            print(f"⚠️ Error force preserving magnifying glass: {e}")
+    
+    def _start_continuous_magnifying_preservation(self):
+        """Start continuous preservation of magnifying glass colors"""
+        def preserve_continuously():
+            try:
+                # Force preserve magnifying glass color every 50ms (more aggressive)
+                if hasattr(self, 'searching_icon') and self.searching_icon.winfo_exists():
+                    # Multiple configure calls to force the colors
+                    self.searching_icon.configure(text_color="#00d4ff")
+                    self.searching_icon.configure(fg_color="transparent")
+                    self.searching_icon.configure(bg_color="transparent")
+                    # Force the widget to redraw
+                    self.searching_icon.update()
+                
+                # Force preserve title color
+                if hasattr(self, 'searching_title') and self.searching_title.winfo_exists():
+                    self.searching_title.configure(text_color="#ffffff")
+                    self.searching_title.configure(fg_color="transparent")
+                    self.searching_title.configure(bg_color="transparent")
+                    self.searching_title.update()
+                
+                # Schedule next preservation (more frequent)
+                self.root.after(50, preserve_continuously)
+            except:
+                # Stop if widgets don't exist
+                pass
+        
+        # Start the continuous preservation
+        preserve_continuously()
+    
+    def _start_continuous_theme_enforcement(self, theme_colors):
+        """Start continuous theme enforcement to ensure all elements stay themed"""
+        def enforce_theme_continuously():
+            try:
+                # Force update main frame every 200ms
+                if hasattr(self, 'main_frame'):
+                    self.main_frame.configure(fg_color=theme_colors['panel'])
+                
+                # Force update tabview
+                if hasattr(self, 'tabview'):
+                    self.tabview.configure(fg_color=theme_colors['panel'])
+                    self.tabview.configure(segmented_button_fg_color=theme_colors['panel'])
+                    self.tabview.configure(segmented_button_unselected_color=theme_colors['panel'])
+                    
+                    # Update all tabs
+                    for tab_name in ['Flips', 'Analytics', 'Demands', 'Enchanting', 'Settings']:
+                        try:
+                            tab = self.tabview.tab(tab_name)
+                            tab.configure(fg_color=theme_colors['panel'])
+                        except:
+                            continue
+                
+                # Force update sidebar
+                if hasattr(self, 'sidebar'):
+                    self.sidebar.configure(fg_color=theme_colors['panel'])
+                
+                # Force update root background
+                self.root.configure(bg=theme_colors['bg'])
+                
+                # Schedule next enforcement
+                self.root.after(200, lambda: enforce_theme_continuously())
+            except:
+                # Stop if there are errors
+                pass
+        
+        # Start the continuous enforcement
+        enforce_theme_continuously()
+    
+    def _force_update_main_content(self, theme_colors):
+        """Force update main content areas that might not respond to theme changes"""
+        try:
+            # Force update main frame
+            if hasattr(self, 'main_frame'):
+                self.main_frame.configure(fg_color=theme_colors['panel'])
+            
+            # Force update tabview content
+            if hasattr(self, 'tabview'):
+                # Update tabview itself
+                self.tabview.configure(fg_color=theme_colors['panel'])
+                self.tabview.configure(segmented_button_fg_color=theme_colors['panel'])
+                self.tabview.configure(segmented_button_unselected_color=theme_colors['panel'])
+                
+                for tab_name in ['Flips', 'Analytics', 'Demands', 'Enchanting', 'Settings']:
+                    try:
+                        tab = self.tabview.tab(tab_name)
+                        tab.configure(fg_color=theme_colors['panel'])
+                        
+                        # Update all children recursively
+                        self._force_update_widget_colors(tab, theme_colors)
+                    except:
+                        continue
+            
+            # Force update sidebar
+            if hasattr(self, 'sidebar'):
+                self.sidebar.configure(fg_color=theme_colors['panel'])
+            
+            # Force update all themed widgets
+            for widget in self._themed_widgets:
+                try:
+                    if isinstance(widget, ctk.CTkFrame):
+                        widget.configure(fg_color=theme_colors['panel'])
+                    elif isinstance(widget, ctk.CTkLabel):
+                        widget.configure(text_color=theme_colors['text'])
+                    elif isinstance(widget, ctk.CTkEntry):
+                        widget.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                    elif isinstance(widget, ctk.CTkComboBox):
+                        widget.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                except:
+                    continue
+            
+            # Force update root background
+            self.root.configure(bg=theme_colors['bg'])
+                
+        except Exception as e:
+            print(f"⚠️ Error force updating main content: {e}")
+    
+    def _force_update_widget_colors(self, parent, theme_colors):
+        """Recursively force update widget colors"""
+        try:
+            for child in parent.winfo_children():
+                if isinstance(child, ctk.CTkFrame):
+                    child.configure(fg_color=theme_colors['panel'])
+                elif isinstance(child, ctk.CTkLabel):
+                    child.configure(text_color=theme_colors['text'])
+                elif isinstance(child, ctk.CTkEntry):
+                    child.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                elif isinstance(child, ctk.CTkComboBox):
+                    child.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                
+                # Recursively update children
+                if hasattr(child, 'winfo_children'):
+                    self._force_update_widget_colors(child, theme_colors)
+        except:
+            pass
+    
+    def _update_settings_tab_theme(self, theme_colors):
+        """Update Settings tab specific elements with theme colors"""
+        try:
+            # Update settings frames and headers
+            if hasattr(self, 'tabview') and hasattr(self.tabview, 'tab'):
+                settings_tab = self.tabview.tab("Settings")
+                if settings_tab:
+                    # Update all frames in settings tab
+                    for child in settings_tab.winfo_children():
+                        if isinstance(child, ctk.CTkFrame):
+                            child.configure(fg_color=theme_colors['panel'])
+                        elif isinstance(child, ctk.CTkLabel):
+                            child.configure(text_color=theme_colors['text'])
+                        # Recursively update nested widgets
+                        for grandchild in child.winfo_children():
+                            if isinstance(grandchild, ctk.CTkFrame):
+                                grandchild.configure(fg_color=theme_colors['panel'])
+                            elif isinstance(grandchild, ctk.CTkLabel):
+                                grandchild.configure(text_color=theme_colors['text'])
+                            elif isinstance(grandchild, ctk.CTkComboBox):
+                                grandchild.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+                            elif isinstance(grandchild, ctk.CTkEntry):
+                                grandchild.configure(fg_color=theme_colors['panel'], text_color=theme_colors['text'])
+        except Exception as e:
+            print(f"⚠️ Error updating Settings tab theme: {e}")
 
     def refresh_ui(self):
         if self._refreshing_ui:
@@ -3706,12 +5084,8 @@ class RatFlipperGUI:
                     elif isinstance(widget, ctk.CTkLabel):
                         widget.configure(text_color=font_color)
                     elif isinstance(widget, AnimatedButton):
-                        widget.configure(text_color=font_color)
-                        widget.configure(fg_color=palette['button_fg'])
-                        widget._fg_normal = palette['button_fg']
-                        widget._fg_hover = widget._darker(palette['button_fg'], 0.85)
-                        widget._fg_press = widget._darker(palette['button_fg'], 0.7)
-                        widget._animate_hover(widget._hovered)
+                        # Preserve original colors for AnimatedButton
+                        widget.preserve_colors()
                     elif isinstance(widget, ctk.CTkComboBox):
                         widget.configure(fg_color=bg_color, text_color=font_color)
                 except Exception as e:
@@ -3746,8 +5120,11 @@ class RatFlipperGUI:
             self.root.configure(bg=palette['bg'])
             self.root.update_idletasks()
             
-            if hasattr(self, 'connection_label'):
-                self.connection_label.configure(text_color=font_color)
+            if hasattr(self, 'connection_label') and self.connection_label.winfo_exists():
+                try:
+                    self.connection_label.configure(text_color=font_color)
+                except:
+                    pass
             
             # Don't call apply_background_image here to prevent infinite loop
             print("✅ refresh_ui completed successfully!")
@@ -3763,6 +5140,440 @@ class RatFlipperGUI:
 
     def show_error_popup(self, message):
         messagebox.showerror("Error", message)
+    
+    def show_tutorial(self):
+        """Show interactive tutorial with highlighting"""
+        self.tutorial_window = ctk.CTkToplevel(self.root)
+        self.tutorial_window.title("Rat Flipper Pro - Interactive Tutorial")
+        self.tutorial_window.geometry("1000x700")
+        self.tutorial_window.resizable(False, False)
+        self.tutorial_window.attributes('-topmost', True)
+        # Ensure tutorial window stays above all other windows
+        self.tutorial_window.attributes('-topmost', True)
+        
+        # Center the window
+        self.tutorial_window.update_idletasks()
+        x = (self.tutorial_window.winfo_screenwidth() // 2) - (1000 // 2)
+        y = (self.tutorial_window.winfo_screenheight() // 2) - (700 // 2)
+        self.tutorial_window.geometry(f"1000x700+{x}+{y}")
+        
+        # Make it modal
+        self.tutorial_window.transient(self.root)
+        self.tutorial_window.grab_set()
+        
+        # Initialize tutorial state
+        self.tutorial_step = 0
+        self.tutorial_steps = [
+            {
+                "title": "Welcome to Rat Flipper Pro! 🐀",
+                "message": "Hi there! 👋 Welcome to Rat Flipper Pro - your ultimate tool for finding profitable trading opportunities in Albion Online!\n\nThis quick 5-minute tour will show you everything you need to know to start making silver. Don't worry, it's super easy!\n\n💡 **Tip**: You can skip this tutorial anytime by clicking the 'Skip Tutorial' button.\n\n🆘 **Need Help?** If you run into any issues or have questions, don't hesitate to ask on Discord - the community is always happy to help and your questions will always be answered!",
+                "highlight": None
+            },
+            {
+                "title": "Let's Start with the Header! 🎛️",
+                "message": "Up here at the top, you'll find all the important controls:\n\n🌐 **NATS Server**: Choose your region (Europe/Americas/Asia) for the best connection\n💎 **Premium**: Toggle this if you have premium (it affects tax calculations)\n🔠 **Font Size**: Make the text bigger or smaller for your comfort\n🔄 **Reconnect**: If you lose connection, click this to reconnect\n📄 **Reload items.txt**: Refresh your item filters when you update your items file\n\nThese settings help optimize your experience!",
+                "highlight": "header_frame"
+            },
+            {
+                "title": "Your Main Navigation Hub 🧭",
+                "message": "On the left side, you'll see 5 main sections:\n\n📊 **Flips**: Your main dashboard - this is where the magic happens!\n📈 **Analytics**: Track your profits and performance\n📋 **Demands**: See which items are in high demand\n✨ **Enchanting**: Calculate enchantment profits\n⚙️ **Settings**: Customize your experience\n\nThink of this as your control center - each button takes you to a different feature!",
+                "highlight": "sidebar_frame"
+            },
+            {
+                "title": "The Heart of Rat Flipper 💖",
+                "message": "This is where all the action happens! Here you'll see:\n\n🎯 **Live Opportunities**: Real-time profitable trades from the Black Market\n💰 **Profit Calculations**: See exactly how much silver you can make\n🏙️ **City Information**: Know which city to buy/sell in\n📊 **Quality & Tier Filters**: Focus on specific item types\n📈 **Sorting Options**: Organize by profit, ROI, or other criteria\n\n⏰ **Important**: Flip opportunities take time to gather! The app needs to collect market data from players scanning the markets. Don't worry if you don't see opportunities immediately - they'll appear as more people contribute data.\n\n💡 **Pro Tip**: For faster data, consider running the [AO Data Client](https://github.com/ao-data/albiondata-client/releases) yourself to scan markets and contribute to the community!",
+                "highlight": "results_panel"
+            },
+            {
+                "title": "Your Status Dashboard 📊",
+                "message": "Down here at the bottom, you'll always know what's happening:\n\n🟢 **Connection Status**: See if you're connected to the market data\n📈 **Opportunities Found**: How many profitable trades are available\n⏰ **Last Scan Time**: When the data was last updated\n🔔 **Notifications**: Important alerts and updates\n\nThis keeps you informed about your app's status at all times!",
+                "highlight": "status_bar"
+            },
+            {
+                "title": "Analytics - Track Your Success! 📈",
+                "message": "The Analytics tab helps you track your trading performance:\n\n💰 **Profit Tracking**: See total silver earned from completed flips\n📊 **Performance Charts**: Visual graphs of your profit over time\n🏆 **Best Items**: Which items made you the most profit\n🏙️ **City Performance**: Which cities were most profitable for you\n📅 **Time Periods**: Filter by day, week, month, or custom ranges\n\nThis is your success dashboard - use it to see how well you're doing!",
+                "highlight": "analytics_tab"
+            },
+            {
+                "title": "Demands - Find Trending Items! 📋",
+                "message": "The Demands tab shows you what's popular in the market:\n\n🔥 **Trending Items**: Items that are being bought/sold frequently\n📈 **Demand Levels**: How much demand each item has\n🏙️ **City Breakdown**: Which cities have the most demand\n⏰ **Recent Activity**: Latest trading activity for each item\n📊 **Profit Tracking**: Track which items you've successfully flipped\n\nUse this to find items that are in high demand and likely to sell quickly!",
+                "highlight": "demands_tab"
+            },
+            {
+                "title": "Enchanting - Calculate Enchant Profits! ✨",
+                "message": "The Enchanting tab helps you profit from item enchantments:\n\n🔮 **Enchantment Calculator**: Calculate costs for enchanting items (T4.0 → T4.1, etc.)\n💰 **Profit Analysis**: See potential profits from enchanting\n🏙️ **City Prices**: Compare enchanting costs across different cities\n📊 **Material Costs**: Set prices for runes, souls, and relics\n⚙️ **Custom Settings**: Configure your own enchanting preferences\n\nPerfect for players who want to make money by enchanting items!",
+                "highlight": "enchanting_tab"
+            },
+            {
+                "title": "Settings - Customize Your Experience! ⚙️",
+                "message": "The Settings tab lets you personalize Rat Flipper Pro:\n\n🔔 **Notifications**: Enable/disable profit alerts and sounds\n🎨 **Themes**: Choose between light and dark themes\n📏 **Window Size**: Adjust the app size to fit your screen\n🌐 **NATS Server**: Select your region for optimal connection\n📄 **Items File**: Manage your item filters and preferences\n🔄 **Auto-Update**: Keep the app updated automatically\n\nMake Rat Flipper Pro work exactly how you want it!",
+                "highlight": "settings_tab"
+            },
+            {
+                "title": "You're All Set! 🎉",
+                "message": "Congratulations! 🎊 You now know everything about Rat Flipper Pro!\n\n🚀 **Quick Start Guide**:\n1. Make sure you're connected (green status)\n2. Check the Flips tab for opportunities\n3. Use filters to find items you want to trade\n4. Click on profitable trades to mark them as done\n5. Check Analytics to track your profits!\n\n⏰ **Remember**: Flip opportunities take time to appear as they depend on community data. Be patient!\n\n💡 **Pro Tips**:\n• Keep your items.txt file updated with items you want to trade\n• Use the city filter to focus on your preferred cities\n• Enable notifications for high-profit opportunities\n• Check the Demands tab to see trending items\n• Consider running the [AO Data Client](https://github.com/ao-data/albiondata-client/releases) for faster data\n\n🆘 **Need Help?** Don't hesitate to ask questions on Discord - the community is always happy to help!\n\nHappy flipping and may your profits be high! 🐀💰",
+                "highlight": None
+            }
+        ]
+        
+        # Main frame with glassmorphism effect
+        main_frame = ctk.CTkFrame(
+            self.tutorial_window, 
+            fg_color="#1a1d2e", 
+            corner_radius=24, 
+            border_width=2, 
+            border_color="#00d4ff"
+        )
+        main_frame.pack(fill="both", expand=True, padx=16, pady=16)
+        
+        # Header
+        header_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=24, pady=(24, 16))
+        
+        # App icon and title
+        icon_label = ctk.CTkLabel(
+            header_frame,
+            text="🐀",
+            font=("Segoe UI Emoji", 32),
+            text_color="#00d4ff"
+        )
+        icon_label.pack(side="left", padx=(0, 12))
+        
+        title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_frame.pack(side="left", fill="x", expand=True)
+        
+        self.tutorial_title_label = ctk.CTkLabel(
+            title_frame,
+            text="",
+            font=("Segoe UI", 24, "bold"),
+            text_color="#ffffff"
+        )
+        self.tutorial_title_label.pack(anchor="w")
+        
+        # Progress bar
+        progress_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        progress_frame.pack(fill="x", padx=24, pady=(0, 16))
+        
+        self.tutorial_progress_label = ctk.CTkLabel(
+            progress_frame,
+            text="",
+            font=("Segoe UI", 12),
+            text_color="#a0aec0"
+        )
+        self.tutorial_progress_label.pack(anchor="w")
+        
+        self.tutorial_progress_bar = ctk.CTkProgressBar(
+            progress_frame,
+            progress_color="#00d4ff",
+            fg_color="#2d3748",
+            corner_radius=8,
+            height=8
+        )
+        self.tutorial_progress_bar.pack(fill="x", pady=(4, 0))
+        
+        # Content area
+        content_frame = ctk.CTkFrame(main_frame, fg_color="#232946", corner_radius=12)
+        content_frame.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        
+        # Message text
+        self.tutorial_message_text = ctk.CTkTextbox(
+            content_frame,
+            font=("Segoe UI", 12),
+            text_color="#e2e8f0",
+            fg_color="transparent",
+            wrap="word",
+            corner_radius=8,
+            height=300
+        )
+        self.tutorial_message_text.pack(fill="both", expand=True, padx=16, pady=16)
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", padx=24, pady=(0, 24))
+        
+        # Left buttons
+        left_buttons = ctk.CTkFrame(button_frame, fg_color="transparent")
+        left_buttons.pack(side="left")
+        
+        skip_btn = ctk.CTkButton(
+            left_buttons,
+            text="⏭️ Skip Tutorial",
+            command=self.tutorial_window.destroy,
+            fg_color="#4a5568",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 12),
+            hover_color="#2d3748"
+        )
+        skip_btn.pack(side="left", padx=(0, 8))
+        
+        # Right buttons
+        right_buttons = ctk.CTkFrame(button_frame, fg_color="transparent")
+        right_buttons.pack(side="right")
+        
+        self.tutorial_prev_btn = ctk.CTkButton(
+            right_buttons,
+            text="⬅️ Previous",
+            command=self.tutorial_previous_step,
+            fg_color="#4a5568",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 12),
+            hover_color="#2d3748"
+        )
+        self.tutorial_prev_btn.pack(side="left", padx=(0, 8))
+        
+        self.tutorial_next_btn = ctk.CTkButton(
+            right_buttons,
+            text="Next ➡️",
+            command=self.tutorial_next_step,
+            fg_color="#00d4ff",
+            text_color="#181c24",
+            corner_radius=18,
+            font=("Segoe UI", 12, "bold"),
+            hover_color="#00b0cc"
+        )
+        self.tutorial_next_btn.pack(side="left")
+        
+        # Bind keyboard shortcuts with better user experience
+        self.tutorial_window.bind('<Escape>', lambda e: self.tutorial_window.destroy())
+        self.tutorial_window.bind('<Left>', lambda e: self.tutorial_previous_step())
+        self.tutorial_window.bind('<Right>', lambda e: self.tutorial_next_step())
+        self.tutorial_window.bind('<Return>', lambda e: self.tutorial_next_step())
+        self.tutorial_window.bind('<space>', lambda e: self.tutorial_next_step())
+        self.tutorial_window.bind('<s>', lambda e: self.tutorial_window.destroy())  # Skip with 's'
+        self.tutorial_window.focus_set()
+        
+        # Add tooltips for better UX
+        self.create_tooltip(self.tutorial_prev_btn, "Previous step (← arrow key)")
+        self.create_tooltip(self.tutorial_next_btn, "Next step (→ arrow key or Enter)")
+        self.create_tooltip(skip_btn, "Skip tutorial (S key or Escape)")
+        
+        # Show first step
+        self.tutorial_show_current_step()
+    
+    def tutorial_show_current_step(self):
+        """Show the current tutorial step"""
+        if self.tutorial_step >= len(self.tutorial_steps):
+            self.tutorial_window.destroy()
+            return
+            
+        step = self.tutorial_steps[self.tutorial_step]
+        
+        # Update title
+        self.tutorial_title_label.configure(text=step["title"])
+        
+        # Update progress with more friendly text
+        progress = (self.tutorial_step + 1) / len(self.tutorial_steps)
+        step_num = self.tutorial_step + 1
+        total_steps = len(self.tutorial_steps)
+        
+        # Create friendly progress text
+        if step_num == 1:
+            progress_text = "🚀 Getting started..."
+        elif step_num == total_steps:
+            progress_text = "🎉 Almost done!"
+        else:
+            progress_text = f"Step {step_num} of {total_steps} - {int(progress * 100)}% complete"
+        
+        self.tutorial_progress_label.configure(text=progress_text)
+        self.tutorial_progress_bar.set(progress)
+        
+        # Update message
+        self.tutorial_message_text.delete("1.0", "end")
+        self.tutorial_message_text.insert("1.0", step["message"])
+        
+        # Update button states
+        self.tutorial_prev_btn.configure(state="normal" if self.tutorial_step > 0 else "disabled")
+        
+        if self.tutorial_step == len(self.tutorial_steps) - 1:
+            self.tutorial_next_btn.configure(text="Finish 🎉")
+        else:
+            self.tutorial_next_btn.configure(text="Next ➡️")
+        
+        # Highlight target element if specified
+        if step["highlight"]:
+            self.tutorial_highlight_element(step["highlight"])
+        else:
+            self.tutorial_clear_highlight()
+    
+    def tutorial_find_element(self, target_name):
+        """Find a UI element by name for tutorial highlighting"""
+        try:
+            # Map target names to actual UI elements
+            element_map = {
+                'sidebar_frame': self.root.grid_slaves(row=1, column=0)[0] if self.root.grid_slaves(row=1, column=0) else None,
+                'results_panel': self.tabview.tab("Flips") if hasattr(self, 'tabview') else None,
+                'main_tabview': self.tabview if hasattr(self, 'tabview') else None,
+                'flips_tab': self.tabview.tab("Flips") if hasattr(self, 'tabview') else None,
+                'analytics_tab': self.tabview.tab("Analytics") if hasattr(self, 'tabview') else None,
+                'demands_tab': self.tabview.tab("Demands") if hasattr(self, 'tabview') else None,
+                'enchanting_tab': self.tabview.tab("Enchanting") if hasattr(self, 'tabview') else None,
+                'settings_tab': self.tabview.tab("Settings") if hasattr(self, 'tabview') else None,
+                'status_bar': self.root.grid_slaves(row=2, column=0)[0] if self.root.grid_slaves(row=2, column=0) else None,
+                'header_frame': self.root.grid_slaves(row=0, column=0)[0] if self.root.grid_slaves(row=0, column=0) else None
+            }
+            
+            element = element_map.get(target_name)
+            print(f"[DEBUG] Found element for {target_name}: {element}")
+            
+            # If it's a tab element, try to find the actual tab button for better highlighting
+            if target_name.endswith('_tab') and element:
+                # Try to find the corresponding button in the sidebar
+                button_map = {
+                    'analytics_tab': 'analytics_btn',
+                    'demands_tab': 'demands_btn', 
+                    'enchanting_tab': 'enchanting_btn',
+                    'settings_tab': 'settings_btn',
+                    'flips_tab': 'flips_btn'
+                }
+                button_name = button_map.get(target_name)
+                if button_name and hasattr(self, button_name):
+                    button_element = getattr(self, button_name)
+                    print(f"[DEBUG] Using button element for {target_name}: {button_element}")
+                    return button_element
+            
+            return element
+        except Exception as e:
+            print(f"Error finding element {target_name}: {e}")
+            return None
+
+    def tutorial_highlight_element(self, target_name):
+        """Highlight a specific UI element"""
+        try:
+            # Clear previous highlight
+            self.tutorial_clear_highlight()
+            
+            # Find and highlight the target element
+            element = self.tutorial_find_element(target_name)
+            if element:
+                self.tutorial_create_highlight_effect(element)
+                # Ensure tutorial window stays on top after highlighting
+                if hasattr(self, 'tutorial_window') and self.tutorial_window:
+                    self.tutorial_window.attributes('-topmost', True)
+                    self.tutorial_window.lift()
+                    self.tutorial_window.focus_force()
+                    # Position highlight below tutorial
+                    if hasattr(self, 'tutorial_highlight_overlay') and self.tutorial_highlight_overlay:
+                        self.tutorial_highlight_overlay.lift(self.root)
+                    # Remove topmost after positioning
+                    self.tutorial_window.attributes('-topmost', False)
+                print(f"Tutorial step: {target_name} (highlighting enabled)")
+            else:
+                print(f"Tutorial step: {target_name} (element not found)")
+                
+        except Exception as e:
+            print(f"Error highlighting element {target_name}: {e}")
+    
+    def tutorial_create_highlight_effect(self, element):
+        """Create a visual highlight effect around an element"""
+        try:
+            # Clear any existing highlight first
+            self.tutorial_clear_highlight()
+            
+            # Get element position and size in screen coordinates
+            x = element.winfo_rootx()
+            y = element.winfo_rooty()
+            width = element.winfo_width()
+            height = element.winfo_height()
+            
+            print(f"[DEBUG] Element dimensions: {width}x{height} at screen coordinates ({x}, {y})")
+            
+            # Only create highlight if element has valid dimensions
+            if width > 0 and height > 0:
+                # Create a Toplevel window for true transparency
+                self.tutorial_highlight_overlay = tk.Toplevel(self.root)
+                self.tutorial_highlight_overlay.overrideredirect(True)
+                self.tutorial_highlight_overlay.attributes('-alpha', 0.3)  # Semi-transparent
+                self.tutorial_highlight_overlay.configure(bg='#00d4ff')
+                
+                # Position the window with padding using screen coordinates
+                padding = 4
+                self.tutorial_highlight_overlay.geometry(f"{width+padding*2}x{height+padding*2}+{x-padding}+{y-padding}")
+                
+                # Ensure proper z-order: tutorial window on top, highlight below
+                if hasattr(self, 'tutorial_window') and self.tutorial_window:
+                    # Make sure tutorial window is on top
+                    self.tutorial_window.attributes('-topmost', True)
+                    self.tutorial_window.lift()
+                    self.tutorial_window.focus_force()
+                    # Position highlight below tutorial but above main app
+                    self.tutorial_highlight_overlay.lift(self.root)
+                    # Keep tutorial on top
+                    self.tutorial_window.lift()
+                else:
+                    # If no tutorial window, just lift above root
+                    self.tutorial_highlight_overlay.lift()
+                
+                print(f"[DEBUG] Created transparent highlight overlay at screen position {x-padding}, {y-padding} with size {width+padding*2}x{height+padding*2}")
+                
+                # Ensure highlight is visible by bringing it to front
+                self.tutorial_highlight_overlay.lift()
+                self.tutorial_highlight_overlay.update()
+                
+                # Start pulsing animation
+                self.tutorial_start_pulse_animation()
+            else:
+                print(f"[DEBUG] Element has invalid dimensions: {width}x{height}")
+            
+        except Exception as e:
+            print(f"Error creating highlight effect: {e}")
+            # Ensure overlay is None if creation fails
+            self.tutorial_highlight_overlay = None
+    
+    def tutorial_start_pulse_animation(self):
+        """Start a pulsing animation for the highlight"""
+        if not hasattr(self, 'tutorial_highlight_overlay') or not self.tutorial_highlight_overlay:
+            return
+            
+        def pulse(alpha=0.3, direction=1):
+            if not hasattr(self, 'tutorial_highlight_overlay') or not self.tutorial_highlight_overlay:
+                return
+                
+            try:
+                # Change alpha transparency for pulsing effect
+                if direction == 1:
+                    alpha += 0.05
+                    if alpha >= 0.6:
+                        direction = -1
+                else:
+                    alpha -= 0.05
+                    if alpha <= 0.2:
+                        direction = 1
+                
+                # Set the alpha transparency
+                self.tutorial_highlight_overlay.attributes('-alpha', alpha)
+                
+                # Schedule next pulse
+                self.tutorial_highlight_overlay.after(200, lambda: pulse(alpha, direction))
+            except:
+                pass  # Element might have been destroyed
+        
+        # Start the animation
+        pulse()
+    
+    def tutorial_clear_highlight(self):
+        """Clear any existing highlight"""
+        if hasattr(self, 'tutorial_highlight_overlay') and self.tutorial_highlight_overlay:
+            try:
+                self.tutorial_highlight_overlay.destroy()
+            except:
+                pass  # Widget might already be destroyed
+            self.tutorial_highlight_overlay = None
+    
+    def tutorial_next_step(self):
+        """Move to next tutorial step"""
+        if self.tutorial_step < len(self.tutorial_steps) - 1:
+            self.tutorial_step += 1
+            self.tutorial_show_current_step()
+        else:
+            self.tutorial_window.destroy()
+    
+    def tutorial_previous_step(self):
+        """Move to previous tutorial step"""
+        if self.tutorial_step > 0:
+            self.tutorial_step -= 1
+            self.tutorial_show_current_step()
 
     def get_palette(self):
         return DARK_PALETTE
@@ -3778,7 +5589,11 @@ class RatFlipperGUI:
         async def do_reconnect():
             # Update UI to show reconnecting status
             def update_status():
-                self.connection_label.configure(text="🟡 Reconnecting...", text_color="orange")
+                try:
+                    if hasattr(self, 'connection_label') and self.connection_label.winfo_exists():
+                        self.connection_label.configure(text="🟡 Reconnecting...", text_color="orange")
+                except:
+                    pass
             self.root.after(0, update_status)
             
             await self.nats_client.disconnect()
@@ -3787,31 +5602,73 @@ class RatFlipperGUI:
         asyncio.run_coroutine_threadsafe(do_reconnect(), self.event_loop)
 
     def run_full_scan(self):
-        """Runs a full scan on all collected data and updates the UI."""
+        """Runs a full scan on all collected data and updates the UI with loading feedback."""
         logger.info("Running full scan for flip opportunities...")
         
-        # Clear the old log and run the scan
-        self.scan_log.clear()
-        all_found_opportunities = self.flip_detector.scan_for_all_flips(self.scan_log)
+        # Show loading state if we have a scan button
+        if hasattr(self, 'scan_button') and isinstance(self.scan_button, AnimatedButton):
+            self.scan_button.set_loading(True, "Scanning...")
         
-        # We can just replace the current list with the full scan result
-        self.flip_opportunities = all_found_opportunities
+        # Update status
+        self.status_var.set("🔍 Scanning for opportunities...")
         
-        logger.info(f"Full scan found {len(self.flip_opportunities)} total opportunities.")
-        
-        # Prune the list to keep only the best flips
-        is_premium = self.premium_var.get()
-        tax_rate = 0.065 if is_premium else 0.105
-        self.flip_opportunities.sort(key=lambda opp: int((opp.profit) - (opp.bm_price * tax_rate)), reverse=True)
-        self.flip_opportunities = self.flip_opportunities[:self.MAX_OPPORTUNITIES]
+        try:
+            # Clear the old log and run the scan
+            self.scan_log.clear()
+            all_found_opportunities = self.flip_detector.scan_for_all_flips(self.scan_log)
+            
+            # We can just replace the current list with the full scan result
+            self.flip_opportunities = all_found_opportunities
+            
+            logger.info(f"Full scan found {len(self.flip_opportunities)} total opportunities.")
+            
+            # Prune the list to keep only the best flips
+            is_premium = self.premium_var.get()
+            tax_rate = 0.065 if is_premium else 0.105
+            self.flip_opportunities.sort(key=lambda opp: int((opp.profit) - (opp.bm_price * tax_rate)), reverse=True)
+            self.flip_opportunities = self.flip_opportunities[:self.MAX_OPPORTUNITIES]
 
-        logger.info(f"Pruned opportunity list to top {len(self.flip_opportunities)} flips.")
+            logger.info(f"Pruned opportunity list to top {len(self.flip_opportunities)} flips.")
+            
+            # Show success feedback
+            if hasattr(self, 'scan_button') and isinstance(self.scan_button, AnimatedButton):
+                self.scan_button.set_loading(False)
+                self.scan_button.show_success(f"Found {len(self.flip_opportunities)} flips!")
+            
+            # Toast notification removed per user request
+            
+            # Update status
+            self.status_var.set(f"✅ Found {len(self.flip_opportunities)} opportunities")
+            
+        except Exception as e:
+            logger.error(f"Error during full scan: {e}")
+            
+            # Show error feedback
+            if hasattr(self, 'scan_button') and isinstance(self.scan_button, AnimatedButton):
+                self.scan_button.set_loading(False)
+                self.scan_button.show_error("Scan failed")
+            
+            # Show error toast (only if UI is ready)
+            try:
+                self.show_toast("Scan failed. Please try again.", "error")
+            except:
+                pass  # Skip toast if UI not ready
+            
+            # Update status
+            self.status_var.set("❌ Scan failed")
         
         # Re-sort and update the display
         self.sort_by_column(self.sort_column, self.sort_reverse, toggle=False)
         # Update status bar
         now = datetime.now().strftime("%H:%M:%S")
-        self.status_var.set(f"Full scan at {now} found {len(self.flip_opportunities)} total flips.")
+        filtered_opportunities = self._get_filtered_opportunities()
+        total_opportunities = len(self.flip_opportunities)
+        displayed_opportunities = len(filtered_opportunities)
+        
+        if displayed_opportunities < total_opportunities:
+            self.status_var.set(f"Full scan at {now} found {total_opportunities} total flips. Displaying {displayed_opportunities} flips. (Some flips are not shown because they are below minimum threshold)")
+        else:
+            self.status_var.set(f"Full scan at {now} found {total_opportunities} total flips. Displaying {displayed_opportunities} flips.")
 
     def reload_item_filters(self):
         """Reloads items from items.txt and updates the flip detector filters."""
@@ -3843,6 +5700,9 @@ class RatFlipperGUI:
         # Check for high profit notification
         self.check_and_notify_high_profit(opportunity)
         
+        # Track profitable flips for demands
+        self.track_profitable_flip(opportunity)
+        
         # Add to batch
         self.opportunity_batch.append(opportunity)
         
@@ -3861,6 +5721,11 @@ class RatFlipperGUI:
             self._update_scheduled = True
             # Use a longer delay for better performance (increased from 100ms to 200ms)
             self._update_job_id = self.root.after(200, self._process_opportunity_batch)
+        
+        # Schedule periodic cleanup of old price data
+        if not hasattr(self, '_cleanup_scheduled') or not self._cleanup_scheduled:
+            self._cleanup_scheduled = True
+            self.root.after(300000, self._cleanup_old_price_data)  # Run every 5 minutes
             
         # Schedule UI update with longer delay for better performance
         if not hasattr(self, '_ui_update_scheduled') or not self._ui_update_scheduled:
@@ -3905,10 +5770,34 @@ class RatFlipperGUI:
                 # Convert back to list
                 self.flip_opportunities = list(existing_flips.values())
 
+            # Clean up old opportunities based on price age
+            current_time = datetime.now(timezone.utc)
+            max_age_minutes = 25  # Remove opportunities older than 25 minutes
+            
+            # Filter out old opportunities
+            fresh_opportunities = []
+            removed_count = 0
+            
+            for opp in self.flip_opportunities:
+                # Check if the opportunity is too old
+                if opp.last_update:
+                    age_minutes = (current_time - opp.last_update).total_seconds() / 60
+                    if age_minutes <= max_age_minutes:
+                        fresh_opportunities.append(opp)
+                    else:
+                        removed_count += 1
+                else:
+                    # If no last_update, keep it (shouldn't happen but safety)
+                    fresh_opportunities.append(opp)
+            
+            self.flip_opportunities = fresh_opportunities
+            
+            if removed_count > 0 and self.debug_enabled:
+                logger.info(f"Cleaned up {removed_count} old opportunities (older than {max_age_minutes} minutes)")
+            
             # Only keep the most recent flips to maintain performance
             if len(self.flip_opportunities) > self.MAX_OPPORTUNITIES:
                 # Sort by time to keep the most recent flips, then apply user's sort
-                current_time = datetime.now(timezone.utc)
                 min_time = datetime.min.replace(tzinfo=timezone.utc)
                 
                 def time_sort_key(opp):
@@ -3922,7 +5811,14 @@ class RatFlipperGUI:
 
             # Update status bar
             now = datetime.now().strftime("%H:%M:%S")
-            self.status_var.set(f"Processed {batch_size} updates at {now}. Displaying {len(self.flip_opportunities)} flips.")
+            filtered_opportunities = self._get_filtered_opportunities()
+            total_opportunities = len(self.flip_opportunities)
+            displayed_opportunities = len(filtered_opportunities)
+            
+            if displayed_opportunities < total_opportunities:
+                self.status_var.set(f"Processed {batch_size} updates at {now}. Displaying {displayed_opportunities} flips. (Some flips are not shown because they are below minimum threshold)")
+            else:
+                self.status_var.set(f"Processed {batch_size} updates at {now}. Displaying {displayed_opportunities} flips.")
             
             # Update display
             self._update_results_display()
@@ -4846,11 +6742,50 @@ class RatFlipperGUI:
         self.scan_for_enchanting_flips()
 
     def _on_tab_changed(self, value=None):
+        """Handle tab changes with instant response"""
         # customtkinter may call this with no argument, so fetch the current tab if needed
         if value is None and hasattr(self.tabview, 'get'):  # Defensive: get current tab
             value = self.tabview.get()
+        
+        # Instant tab transition - no animations
+        self._animate_tab_transition(value)
+        
         # No longer call scan_for_enchanting_flips here; handled by auto scan
         pass
+    
+    def _animate_tab_transition(self, new_tab):
+        """Instant tab transition with zero lag"""
+        try:
+            # Completely instant tab switching - no animations at all
+            if hasattr(self, 'tab_buttons'):
+                for tab_name, button in self.tab_buttons.items():
+                    if tab_name == new_tab:
+                        button.configure(fg_color="#00d4ff", text_color="#ffffff")
+                    else:
+                        button.configure(fg_color="#4a5568", text_color="#a0aec0")
+            
+        except Exception as e:
+            logger.error(f"Error in tab transition: {e}")
+    
+    def _interpolate_color(self, color1, color2, t):
+        """Interpolate between two colors"""
+        try:
+            # Convert hex colors to RGB tuples
+            def hex_to_rgb(hex_color):
+                hex_color = hex_color.lstrip('#')
+                return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            
+            def rgb_to_hex(rgb):
+                return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+            
+            rgb1 = hex_to_rgb(color1)
+            rgb2 = hex_to_rgb(color2)
+            
+            # Interpolate each component
+            new_rgb = tuple(int(rgb1[i] + (rgb2[i] - rgb1[i]) * t) for i in range(3))
+            return rgb_to_hex(new_rgb)
+        except:
+            return color2  # Fallback to target color
 
     def schedule_auto_enchanting_scan(self):
         """Automatically scan for enchanting flips every 5 seconds for better performance."""
@@ -5045,6 +6980,133 @@ class RatFlipperGUI:
             logger.info(f"Saved {len(self.completed_flips_history)} completed flips to {self.completed_flips_file}")
         except Exception as e:
             logger.error(f"Error saving completed flips: {e}")
+
+    def load_demands_data(self):
+        """Load demands data from JSON file"""
+        try:
+            if os.path.exists(self.demands_file):
+                with open(self.demands_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Convert old format to new format if needed
+                    self.demands_data = {}
+                    for item_name, item_data in data.items():
+                        if isinstance(item_data, dict) and 'count' in item_data:
+                            # New format
+                            self.demands_data[item_name] = item_data
+                        else:
+                            # Old format - convert
+                            self.demands_data[item_name] = {
+                                'count': item_data,
+                                'total_profit': 0,
+                                'last_seen': datetime.now().isoformat(),
+                                'flips_list': []
+                            }
+                logger.info(f"Loaded {len(self.demands_data)} demands from {self.demands_file}")
+        except Exception as e:
+            logger.error(f"Error loading demands data: {e}")
+            self.demands_data = {}
+
+    def save_demands_data(self):
+        """Save demands data to JSON file"""
+        try:
+            with open(self.demands_file, 'w', encoding='utf-8') as f:
+                json.dump(self.demands_data, f, indent=2)
+            logger.info(f"Saved {len(self.demands_data)} demands to {self.demands_file}")
+        except Exception as e:
+            logger.error(f"Error saving demands data: {e}")
+
+    def refresh_demands_tab(self):
+        """Refresh the demands tab display"""
+        try:
+            if hasattr(self, 'demands_listbox'):
+                # Clear existing content
+                self.demands_listbox.delete("1.0", "end")
+                
+                if not self.demands_data:
+                    self.demands_listbox.insert("1.0", "No demands data available.\n\nStart flipping to track profitable items!")
+                else:
+                    # Display demands data with enhanced information
+                    content = "📊 Profitable Flips Demands:\n\n"
+                    
+                    # Sort by count (highest first)
+                    sorted_items = sorted(self.demands_data.items(), key=lambda x: x[1]['count'], reverse=True)
+                    
+                    for item_name, item_data in sorted_items:
+                        display_name = self.item_manager.get_display_name(item_name)
+                        count = item_data['count']
+                        total_profit = item_data['total_profit']
+                        avg_profit = total_profit / count if count > 0 else 0
+                        last_seen = item_data['last_seen']
+                        
+                        # Format last seen date
+                        try:
+                            last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                            last_seen_str = last_seen_dt.strftime('%Y-%m-%d')
+                        except:
+                            last_seen_str = "Unknown"
+                        
+                        # Calculate profit margin (approximate)
+                        profit_margin = (avg_profit / (total_profit / count)) * 100 if total_profit > 0 else 0
+                        
+                        content += f"• {display_name}\n"
+                        content += f"  Flips: {count} | Avg Profit: {avg_profit:,.0f} | Last Seen: {last_seen_str}\n\n"
+                    
+                    self.demands_listbox.insert("1.0", content)
+                    
+        except Exception as e:
+            print(f"❌ Error refreshing demands tab: {e}")
+
+    def track_profitable_flip(self, opportunity):
+        """Track a profitable flip opportunity"""
+        try:
+            item_name = opportunity.item_name
+            
+            # Check if this is a profitable flip
+            is_premium = self.premium_var.get()
+            tax_rate = 0.065 if is_premium else 0.105
+            profit = int((opportunity.bm_price - opportunity.city_price) - (opportunity.bm_price * tax_rate))
+            
+            if profit > 0:  # Only track profitable flips
+                current_time = datetime.now().isoformat()
+                
+                if item_name in self.demands_data:
+                    # Update existing item
+                    self.demands_data[item_name]['count'] += 1
+                    self.demands_data[item_name]['total_profit'] += profit
+                    self.demands_data[item_name]['last_seen'] = current_time
+                    self.demands_data[item_name]['flips_list'].append({
+                        'profit': profit,
+                        'timestamp': current_time,
+                        'city': opportunity.city,
+                        'bm_price': opportunity.bm_price,
+                        'city_price': opportunity.city_price
+                    })
+                else:
+                    # Create new item entry
+                    self.demands_data[item_name] = {
+                        'count': 1,
+                        'total_profit': profit,
+                        'last_seen': current_time,
+                        'flips_list': [{
+                            'profit': profit,
+                            'timestamp': current_time,
+                            'city': opportunity.city,
+                            'bm_price': opportunity.bm_price,
+                            'city_price': opportunity.city_price
+                        }]
+                    }
+                
+                # Save to file
+                self.save_demands_data()
+                
+                # Refresh display if demands tab is visible
+                if hasattr(self, 'demands_listbox'):
+                    self.refresh_demands_tab()
+                    
+                logger.info(f"Tracked profitable flip for {item_name}: {self.demands_data[item_name]['count']} total")
+                
+        except Exception as e:
+            logger.error(f"Error tracking profitable flip: {e}")
 
     def create_analytics_section(self, parent):
         """Create analytics section with original functionality and modern styling"""
@@ -5247,6 +7309,235 @@ class RatFlipperGUI:
         except Exception as e:
             print(f"❌ Error rebuilding analytics section: {e}")
 
+    def create_demands_panel(self, parent):
+        """Create demands panel with profitable flips tracking"""
+        try:
+            # Main header
+            header_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
+            header_frame.pack(fill="x", padx=8, pady=(8, 4))
+            
+            header_label = ctk.CTkLabel(
+                header_frame,
+                text="📊 Profitable Flips Demands",
+                font=("Segoe UI", 16, "bold"),
+                text_color="#00d4ff"
+            )
+            header_label.pack(pady=12)
+            
+            # Description
+            desc_label = ctk.CTkLabel(
+                header_frame,
+                text="Track profitable flips between Black Market and Royal Market",
+                font=("Segoe UI", 11),
+                text_color="#a0aec0"
+            )
+            desc_label.pack(pady=(0, 12))
+            
+            # Controls frame
+            controls_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
+            controls_frame.pack(fill="x", padx=8, pady=4)
+            
+            # Arrow button to open demands sub-tab
+            arrow_btn = AnimatedButton(
+                controls_frame,
+                text="➡️ Open Demands Details",
+                command=self.open_demands_details,
+                width=200,
+                height=40,
+                fg_color="#4a5568",
+                text_color="#f8f8f2",
+                corner_radius=20
+            )
+            arrow_btn.pack(pady=12)
+            
+            # Demands summary
+            summary_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
+            summary_frame.pack(fill="both", expand=True, padx=8, pady=4)
+            
+            summary_label = ctk.CTkLabel(
+                summary_frame,
+                text="📈 Demands Summary",
+                font=("Segoe UI", 14, "bold"),
+                text_color="#00d4ff"
+            )
+            summary_label.pack(pady=(16, 8), padx=16, anchor="w")
+            
+            # Demands list
+            self.demands_listbox = ctk.CTkTextbox(
+                summary_frame,
+                font=("Segoe UI", 11),
+                fg_color="#1a1d2e",
+                text_color="#e2e8f0",
+                height=300,
+                corner_radius=8
+            )
+            self.demands_listbox.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+            
+            # Refresh button
+            refresh_demands_btn = ctk.CTkButton(
+                parent,
+                text="🔄 Refresh Demands",
+                command=self.refresh_demands_tab,
+                fg_color="#4a5568",
+                text_color="#f8f8f2",
+                font=("Segoe UI", 12, "bold"),
+                corner_radius=20,
+                height=40,
+                hover_color="#00b0cc"
+            )
+            refresh_demands_btn.pack(anchor="ne", padx=16, pady=16)
+            
+            # Initialize demands display
+            self.refresh_demands_tab()
+            
+        except Exception as e:
+            print(f"❌ Error creating demands panel: {e}")
+            # Create error display
+            error_frame = ctk.CTkFrame(parent, fg_color="#2d1b1b", corner_radius=12, border_width=1, border_color="#ff4b91")
+            error_frame.pack(fill="x", padx=8, pady=8)
+            
+            error_label = ctk.CTkLabel(
+                error_frame,
+                text=f"❌ Error loading Demands: {e}",
+                font=("Segoe UI", 11, "bold"),
+                text_color="#ff4b91"
+            )
+            error_label.pack(pady=12)
+
+    def open_demands_details(self):
+        """Open detailed demands window"""
+        try:
+            # Create new window for detailed demands
+            details_window = ctk.CTkToplevel(self.root)
+            details_window.title("Demands Details")
+            details_window.geometry("1000x700")
+            details_window.attributes('-alpha', 0.0)
+            
+            # Center the window
+            x = self.root.winfo_x() + (self.root.winfo_width() - 1000) // 2
+            y = self.root.winfo_y() + (self.root.winfo_height() - 700) // 2
+            details_window.geometry(f"1000x700+{x}+{y}")
+            
+            # Fade in animation
+            def fade_in(alpha=0.0):
+                if alpha < 1.0:
+                    details_window.attributes('-alpha', alpha)
+                    details_window.after(20, lambda: fade_in(alpha + 0.05))
+                else:
+                    details_window.attributes('-alpha', 1.0)
+            fade_in()
+            
+            # Header
+            header = ctk.CTkLabel(
+                details_window,
+                text="📊 Detailed Demands Analysis",
+                font=("Segoe UI", 18, "bold"),
+                text_color="#00d4ff"
+            )
+            header.pack(pady=20)
+            
+            # Demands table
+            table_frame = ctk.CTkFrame(details_window, fg_color="#232946", corner_radius=12)
+            table_frame.pack(fill="both", expand=True, padx=20, pady=20)
+            
+            # Create treeview for demands with enhanced columns
+            columns = ('Rank', 'Item', 'Flips', 'Avg Profit', 'Profit Margin', 'Last Update')
+            demands_tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=20)
+            
+            # Configure columns
+            demands_tree.heading('Rank', text='Rank')
+            demands_tree.heading('Item', text='Item Name')
+            demands_tree.heading('Flips', text='Flips')
+            demands_tree.heading('Avg Profit', text='Avg Profit')
+            demands_tree.heading('Profit Margin', text='Profit Margin')
+            demands_tree.heading('Last Update', text='Last Update')
+            
+            demands_tree.column('Rank', width=80, anchor='center')
+            demands_tree.column('Item', width=300, anchor='w')
+            demands_tree.column('Flips', width=100, anchor='center')
+            demands_tree.column('Avg Profit', width=120, anchor='center')
+            demands_tree.column('Profit Margin', width=120, anchor='center')
+            demands_tree.column('Last Update', width=120, anchor='center')
+            
+            # Add scrollbars
+            v_scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=demands_tree.yview)
+            h_scrollbar = ttk.Scrollbar(table_frame, orient='horizontal', command=demands_tree.xview)
+            demands_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+            
+            demands_tree.pack(side="left", fill="both", expand=True)
+            v_scrollbar.pack(side="right", fill="y")
+            h_scrollbar.pack(side="bottom", fill="x")
+            
+            # Populate demands data with enhanced information
+            if self.demands_data:
+                # Sort by count (highest first)
+                sorted_items = sorted(self.demands_data.items(), key=lambda x: x[1]['count'], reverse=True)
+                
+                for rank, (item_name, item_data) in enumerate(sorted_items, 1):
+                    display_name = self.item_manager.get_display_name(item_name)
+                    count = item_data['count']
+                    total_profit = item_data['total_profit']
+                    avg_profit = total_profit / count if count > 0 else 0
+                    last_seen = item_data['last_seen']
+                    
+                    # Format last seen date
+                    try:
+                        last_seen_dt = datetime.fromisoformat(last_seen.replace('Z', '+00:00'))
+                        last_seen_str = last_seen_dt.strftime('%Y-%m-%d')
+                    except:
+                        last_seen_str = "Unknown"
+                    
+                    # Calculate profit margin percentage
+                    if len(item_data['flips_list']) > 0:
+                        recent_profits = [flip['profit'] for flip in item_data['flips_list'][-10:]]  # Last 10 flips
+                        avg_recent_profit = sum(recent_profits) / len(recent_profits) if recent_profits else 0
+                        # Estimate profit margin based on average profit vs typical item price
+                        profit_margin = min(50, (avg_recent_profit / 1000) * 10) if avg_recent_profit > 0 else 0  # Rough estimate
+                    else:
+                        profit_margin = 0
+                    
+                    # Format values
+                    avg_profit_str = f"{avg_profit:,.0f}" if avg_profit > 0 else "0"
+                    profit_margin_str = f"{profit_margin:.0f}%" if profit_margin > 0 else "0%"
+                    
+                    # Add rank icon
+                    if rank == 1:
+                        rank_display = "🥇 1"
+                    elif rank == 2:
+                        rank_display = "🥈 2"
+                    elif rank == 3:
+                        rank_display = "🥉 3"
+                    else:
+                        rank_display = str(rank)
+                    
+                    demands_tree.insert('', 'end', values=(
+                        rank_display,
+                        display_name,
+                        count,
+                        avg_profit_str,
+                        profit_margin_str,
+                        last_seen_str
+                    ))
+            else:
+                demands_tree.insert('', 'end', values=("", "No demands data available", "", "", "", ""))
+            
+            # Close button
+            close_btn = ctk.CTkButton(
+                details_window,
+                text="Close",
+                command=details_window.destroy,
+                fg_color="#ff4b91",
+                text_color="#ffffff",
+                font=("Segoe UI", 12, "bold"),
+                corner_radius=20,
+                height=40
+            )
+            close_btn.pack(pady=20)
+            
+        except Exception as e:
+            print(f"❌ Error opening demands details: {e}")
+            messagebox.showerror("Error", f"Failed to open demands details: {e}")
+
     def open_url(self, url):
         """Open URL in default browser"""
         import webbrowser
@@ -5381,7 +7672,7 @@ class RatFlipperGUI:
             header_frame.pack(fill="x", padx=16, pady=(10, 6))
             
             # App icon
-            icon_label = tk.Label(header_frame, text="🦁", font=("Segoe UI Emoji", 14), 
+            icon_label = tk.Label(header_frame, text="🐀", font=("Segoe UI Emoji", 14), 
                                 bg="#232946", fg="#00d4ff")
             icon_label.pack(side="left")
             
@@ -5494,31 +7785,83 @@ class RatFlipperGUI:
             except:
                 pass
     
+    def show_toast(self, message, notification_type="success", duration=3000):
+        """Show a toast notification with better UX"""
+        try:
+            # Create toast container if it doesn't exist
+            if not hasattr(self, 'toast_container'):
+                self.toast_container = ctk.CTkFrame(self.root, fg_color="transparent")
+                self.toast_container.place(relx=1.0, y=50, anchor="ne")
+            
+            # Create toast notification
+            toast = ToastNotification(
+                self.toast_container,
+                message,
+                notification_type,
+                duration
+            )
+            toast.pack(fill="x", padx=10, pady=5)
+            
+            # Auto-remove after duration
+            toast.after(duration + 1000, toast.destroy)
+        except Exception as e:
+            # Fallback to simple messagebox if toast fails
+            print(f"Toast notification failed: {e}")
+            if notification_type == "success":
+                messagebox.showinfo("Success", message)
+            elif notification_type == "error":
+                messagebox.showerror("Error", message)
+            else:
+                messagebox.showinfo("Info", message)
+    
     def play_notification_sound(self):
-        """Play a notification sound - cross-platform compatible"""
+        """Play a notification sound"""
         try:
             if platform.system() == "Windows":
                 import winsound
                 # Play Windows system notification sound
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
             elif platform.system() == "Darwin":  # macOS
-                import os
-                # Play macOS system notification sound
-                os.system("afplay /System/Library/Sounds/Glass.aiff")
-            else:  # Linux and other Unix-like systems
-                import os
-                # Try different sound methods for Linux
+                import subprocess
+                # Try macOS system sound using afplay
                 try:
-                    os.system("paplay /usr/share/sounds/freedesktop/stereo/complete.oga")
-                except:
+                    # Play macOS system notification sound
+                    subprocess.Popen(['afplay', '/System/Library/Sounds/Glass.aiff'], 
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except (FileNotFoundError, OSError):
+                    # Fallback: use osascript to play system beep
                     try:
-                        os.system("aplay /usr/share/sounds/sound-icons/glass-water-1.wav")
-                    except:
-                        os.system("echo -e '\a'")  # Terminal bell as fallback
+                        subprocess.Popen(['osascript', '-e', 'beep'], 
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except (FileNotFoundError, OSError):
+                        # Final fallback: terminal bell
+                        try:
+                            import sys
+                            sys.stdout.write('\a')
+                            sys.stdout.flush()
+                        except:
+                            pass  # Silent fallback
+            else:  # Linux
+                import subprocess
+                # Try PulseAudio (most common on Linux)
+                try:
+                    subprocess.Popen(['paplay', '/usr/share/sounds/freedesktop/stereo/notification.oga'], 
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except (FileNotFoundError, OSError):
+                    # Try ALSA (fallback for systems without PulseAudio)
+                    try:
+                        subprocess.Popen(['aplay', '/usr/share/sounds/alsa/Front_Left.wav'], 
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except (FileNotFoundError, OSError):
+                        # Final fallback: terminal bell
+                        try:
+                            import sys
+                            sys.stdout.write('\a')
+                            sys.stdout.flush()
+                        except:
+                            pass  # Silent fallback
         except Exception as e:
             print(f"❌ Error playing notification sound: {e}")
-            # Silent fallback
-            pass
     
     def check_and_notify_high_profit(self, opportunity):
         """Check if opportunity meets notification criteria and show notification"""
@@ -5538,7 +7881,7 @@ class RatFlipperGUI:
         
         if profit_after_tax >= min_profit:
             # Format the notification
-            title = f"🦁 RatFlipper - High Profit Alert!"
+            title = f"🐀 RatFlipper - High Profit Alert!"
             
             item_name = self.item_manager.get_display_name(opportunity.item_name)
             quality_name = QUALITY_LEVEL_NAMES.get(opportunity.bm_quality, f"Q{opportunity.bm_quality}")
@@ -5563,6 +7906,344 @@ class RatFlipperGUI:
         # If debug window is open, update its state too
         if hasattr(self, 'debug_window_open'):
             self.debug_window_open = self.debug_enabled
+
+    def set_window_size(self, width, height):
+        """Set window size from preset buttons"""
+        print(f"🔍 set_window_size called with: width={width}, height={height}")
+        if hasattr(self, 'window_width_var') and hasattr(self, 'window_height_var'):
+            self.window_width_var.set(str(width))
+            self.window_height_var.set(str(height))
+            print(f"🔍 Set variables: width_var='{self.window_width_var.get()}', height_var='{self.window_height_var.get()}'")
+            self.apply_window_size()
+        else:
+            print("❌ Window size variables not available")
+            self.show_error_popup("Window size controls not available")
+
+    def apply_window_size(self):
+        """Apply the window size settings"""
+        try:
+            if not hasattr(self, 'window_width_var') or not hasattr(self, 'window_height_var'):
+                self.show_error_popup("Window size controls not initialized yet")
+                return
+            
+            # Get the values and clean them
+            width_str = self.window_width_var.get().strip()
+            height_str = self.window_height_var.get().strip()
+            
+            print(f"🔍 Debug: width_str='{width_str}', height_str='{height_str}'")
+            
+            # Check if values are empty
+            if not width_str or not height_str:
+                self.show_error_popup("Please enter both width and height values")
+                return
+            
+            # Try to convert to integers
+            try:
+                width = int(width_str)
+                height = int(height_str)
+            except ValueError as e:
+                print(f"❌ Conversion error: {e}")
+                self.show_error_popup(f"Invalid number format. Width: '{width_str}', Height: '{height_str}'")
+                return
+            
+            print(f"🔍 Debug: width={width}, height={height}")
+            
+            # Validate dimensions
+            if width < 800 or height < 600:
+                self.show_error_popup("Minimum window size is 800x600")
+                return
+            
+            if width > 4000 or height > 3000:
+                self.show_error_popup("Maximum window size is 4000x3000")
+                return
+            
+            # Get current window position to maintain it
+            current_geometry = self.root.geometry()
+            print(f"🔍 Current geometry: '{current_geometry}'")
+            
+            if '+' in current_geometry:
+                # Extract position from current geometry
+                parts = current_geometry.split('+')
+                print(f"🔍 Geometry parts: {parts}")
+                if len(parts) >= 3:
+                    x_pos, y_pos = parts[1], parts[2]
+                else:
+                    # Fallback to centering
+                    screen_width = self.root.winfo_screenwidth()
+                    screen_height = self.root.winfo_screenheight()
+                    x_pos = str((screen_width - width) // 2)
+                    y_pos = str((screen_height - height) // 2)
+            else:
+                # Center on screen if no position info
+                screen_width = self.root.winfo_screenwidth()
+                screen_height = self.root.winfo_screenheight()
+                x_pos = str((screen_width - width) // 2)
+                y_pos = str((screen_height - height) // 2)
+            
+            # Apply the new size with position
+            self.root.geometry(f"{width}x{height}+{x_pos}+{y_pos}")
+            
+            # Update minimum size to prevent window from being too small
+            self.root.minsize(max(800, width // 2), max(600, height // 2))
+            
+            # Force update to ensure size is applied
+            self.root.update_idletasks()
+            self.root.update()
+            
+            # Save the settings
+            self.save_config()
+            
+            print(f"🪟 Window resized to {width}x{height}")
+            
+        except Exception as e:
+            print(f"❌ Unexpected error in apply_window_size: {e}")
+            self.show_error_popup(f"Unexpected error: {e}")
+
+    def center_window_on_screen(self):
+        """Center the window on the screen"""
+        try:
+            # Get screen dimensions
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
+            # Get current window dimensions
+            window_width = self.root.winfo_width()
+            window_height = self.root.winfo_height()
+            
+            # If window hasn't been rendered yet, use geometry string
+            if window_width <= 1 or window_height <= 1:
+                geometry = self.root.geometry()
+                if 'x' in geometry:
+                    window_width, window_height = map(int, geometry.split('+')[0].split('x'))
+                else:
+                    return  # Can't center if we don't know the size
+            
+            # Calculate center position
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+            
+            # Apply the new position
+            self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+            
+        except Exception as e:
+            print(f"Error centering window: {e}")
+
+    def update_window_size_display(self):
+        """Update the window size input fields with current window size"""
+        try:
+            if hasattr(self, 'window_width_var') and hasattr(self, 'window_height_var'):
+                current_width = self.root.winfo_width()
+                current_height = self.root.winfo_height()
+                if current_width > 100 and current_height > 100:  # Only update if reasonable size
+                    self.window_width_var.set(str(current_width))
+                    self.window_height_var.set(str(current_height))
+                    print(f"🪟 Updated window size display: {current_width}x{current_height}")
+        except Exception as e:
+            print(f"Error updating window size display: {e}")
+
+    def show_management_popup(self):
+        """Show a popup with quick access to flip management functions"""
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("🐀 Flip Management")
+        popup.geometry("400x350")  # Increased height
+        popup.configure(fg_color="#232946")
+        popup.attributes('-topmost', True)
+        
+        # Center the popup with better positioning
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 200
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 175  # Adjusted for new height
+        popup.geometry(f"400x350+{x}+{y}")
+        
+        # Header
+        header_label = ctk.CTkLabel(
+            popup,
+            text="🐀 Flip Management",
+            font=("Segoe UI", 18, "bold"),
+            text_color=ACCENT_COLOR
+        )
+        header_label.pack(pady=15)
+        
+        # Description
+        desc_label = ctk.CTkLabel(
+            popup,
+            text="Quick access to flip management functions",
+            font=("Segoe UI", 12),
+            text_color="#a0aec0"
+        )
+        desc_label.pack(pady=(0, 15))
+        
+        # Buttons frame
+        buttons_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        buttons_frame.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+        
+        # Export button
+        export_btn = AnimatedButton(
+            buttons_frame,
+            text="💾 Export Completed Flips",
+            command=lambda: [self.export_opportunities(), popup.destroy()],
+            width=300,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        export_btn.pack(pady=8)
+        self.create_tooltip(export_btn, "Export your completed flips to a CSV file for analysis")
+        
+        # Clear all button
+        clear_btn = AnimatedButton(
+            buttons_frame,
+            text="🗑️ Clear All Flips",
+            command=lambda: [self.clear_results(), popup.destroy()],
+            width=300,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        clear_btn.pack(pady=8)
+        self.create_tooltip(clear_btn, "Remove all flip opportunities and completed flips from the list")
+        
+        # Reset sort button
+        reset_btn = AnimatedButton(
+            buttons_frame,
+            text="🔄 Reset Sort",
+            command=lambda: [self.reset_sort(), popup.destroy()],
+            width=300,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        reset_btn.pack(pady=8)
+        self.create_tooltip(reset_btn, "Reset table sorting to default (Total Profit, descending)")
+        
+        # Cleanup old data button
+        cleanup_btn = AnimatedButton(
+            buttons_frame,
+            text="🧹 Clean Old Data",
+            command=lambda: [self.manual_cleanup(), popup.destroy()],
+            width=300,
+            height=40,
+            fg_color="#4a5568",
+            text_color="#f8f8f2",
+            corner_radius=20
+        )
+        cleanup_btn.pack(pady=8)
+        self.create_tooltip(cleanup_btn, "Remove old flip opportunities and price data (older than 25 minutes)")
+        
+        # Close button
+        close_btn = AnimatedButton(
+            buttons_frame,
+            text="❌ Close",
+            command=popup.destroy,
+            width=300,
+            height=35,
+            fg_color="#ff4444",
+            text_color="#ffffff",
+            corner_radius=18
+        )
+        close_btn.pack(pady=(20, 8))
+
+    def manual_cleanup(self):
+        """Manually trigger cleanup of old data"""
+        try:
+            # Clean up old opportunities
+            current_time = datetime.now(timezone.utc)
+            max_age_minutes = 25
+            old_count = len(self.flip_opportunities)
+            
+            fresh_opportunities = []
+            for opp in self.flip_opportunities:
+                if opp.last_update:
+                    age_minutes = (current_time - opp.last_update).total_seconds() / 60
+                    if age_minutes <= max_age_minutes:
+                        fresh_opportunities.append(opp)
+                else:
+                    fresh_opportunities.append(opp)
+            
+            self.flip_opportunities = fresh_opportunities
+            removed_opportunities = old_count - len(self.flip_opportunities)
+            
+            # Clean up old price data
+            self._cleanup_old_price_data()
+            
+            # Update display
+            self._update_results_display()
+            
+            # Show result
+            now = datetime.now().strftime("%H:%M:%S")
+            self.status_var.set(f"Manual cleanup at {now}: Removed {removed_opportunities} old opportunities")
+            
+            logger.info(f"Manual cleanup completed: Removed {removed_opportunities} old opportunities")
+            
+        except Exception as e:
+            logger.error(f"Error in manual_cleanup: {e}")
+            self.status_var.set(f"Error during cleanup: {str(e)}")
+
+    def _cleanup_old_price_data(self):
+        """Clean up old price data from the flip detector"""
+        try:
+            current_time = datetime.now(timezone.utc)
+            max_age_minutes = 25  # Remove price data older than 25 minutes
+            removed_count = 0
+            
+            # Clean up city price data
+            for item_id in list(self.flip_detector.city_price_data.keys()):
+                for city_name in list(self.flip_detector.city_price_data[item_id].keys()):
+                    for quality in list(self.flip_detector.city_price_data[item_id][city_name].keys()):
+                        data = self.flip_detector.city_price_data[item_id][city_name][quality]
+                        if data.get('last_update'):
+                            age_minutes = (current_time - data['last_update']).total_seconds() / 60
+                            if age_minutes > max_age_minutes:
+                                del self.flip_detector.city_price_data[item_id][city_name][quality]
+                                removed_count += 1
+                    
+                    # Remove empty city entries
+                    if not self.flip_detector.city_price_data[item_id][city_name]:
+                        del self.flip_detector.city_price_data[item_id][city_name]
+                
+                # Remove empty item entries
+                if not self.flip_detector.city_price_data[item_id]:
+                    del self.flip_detector.city_price_data[item_id]
+            
+            # Clean up BM price data
+            for item_key in list(self.flip_detector.bm_price_data.keys()):
+                for market in list(self.flip_detector.bm_price_data[item_key].keys()):
+                    data = self.flip_detector.bm_price_data[item_key][market]
+                    if data.get('last_update'):
+                        age_minutes = (current_time - data['last_update']).total_seconds() / 60
+                        if age_minutes > max_age_minutes:
+                            del self.flip_detector.bm_price_data[item_key][market]
+                            removed_count += 1
+                
+                # Remove empty market entries
+                if not self.flip_detector.bm_price_data[item_key]:
+                    del self.flip_detector.bm_price_data[item_key]
+            
+            if removed_count > 0:
+                logger.info(f"Cleaned up {removed_count} old price data entries (older than {max_age_minutes} minutes)")
+            
+            # Reset the cleanup flag and schedule next cleanup
+            self._cleanup_scheduled = False
+            
+        except Exception as e:
+            logger.error(f"Error in _cleanup_old_price_data: {e}")
+            self._cleanup_scheduled = False
+
+    def on_window_resize(self, event):
+        """Handle window resize events to maintain proper scaling"""
+        if event.widget == self.root:
+            # Update window size variables to reflect current size
+            if hasattr(self, 'window_width_var') and hasattr(self, 'window_height_var'):
+                current_width = self.root.winfo_width()
+                current_height = self.root.winfo_height()
+                if current_width > 100 and current_height > 100:  # Only update if reasonable size
+                    self.window_width_var.set(str(current_width))
+                    self.window_height_var.set(str(current_height))
+            
+            # Update any elements that need to scale with window size
+            self.refresh_ui()
 
 # Main entry point
 
